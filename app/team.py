@@ -17,7 +17,6 @@
 - 작성자: 팀스페이스 일정 파일 저장 때 바뀐 줄의 작성·수정 팀원 id 를 .dogani/authors.json 에 기록 (이름은 볼 때 team.json 에서)
 """
 import datetime as dt
-import difflib
 import os
 import secrets
 import threading
@@ -99,6 +98,24 @@ def format_invite(code):
 def clean_name(name):
     name = " ".join(str(name or "").split())[:NAME_MAX]
     return name
+
+
+def _line_opcodes(a, b):
+    """앞뒤로 같은 줄을 빼고 가운데를 바뀐 구간으로 본다 (difflib 대신: exe 에 difflib 가 없어 받은 코드가 import 오류로 죽음).
+    옮겨진 줄·떨어진 여러 곳 수정은 호출하는 쪽이 줄 원문(old_set·prev)으로 다시 걸러냄"""
+    n = min(len(a), len(b))
+    p = 0
+    while p < n and a[p] == b[p]:
+        p += 1
+    q = 0
+    while q < n - p and a[-1 - q] == b[-1 - q]:
+        q += 1
+    ops = [("equal", 0, p, 0, p)] if p else []
+    if p < len(a) - q or p < len(b) - q:
+        ops.append(("replace", p, len(a) - q, p, len(b) - q))
+    if q:
+        ops.append(("equal", len(a) - q, len(a), len(b) - q, len(b)))
+    return ops
 
 
 class TeamError(Exception):
@@ -411,7 +428,7 @@ class TeamHost:
             prev = self.authors
             old_set, new_set = set(a), set(b)
             out = {k: v for k, v in prev.items() if k not in old_set}   # 다른 파일의 줄
-            for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+            for tag, i1, i2, j1, j2 in _line_opcodes(a, b):
                 for k in range(j2 - j1):
                     line = b[j1 + k]
                     if line in out:

@@ -48,7 +48,7 @@
 | `app/updater.py` | GitHub 최신 버전 태그 받기(`stage`, 태그 zip 의 `app/` → `app.new`) |
 | `app/liveupdate.py` | exe: 버전 표시만(실행 중 확인 없음). 소스 실행: `devreload` 연결 |
 | `app/devreload.py` | 개발 모드 파일 감시(ui → 새로고침, .py → 문법 확인 후 재시작) |
-| `app/deps.py` | exe 에 넣을 모듈 목록(받은 코드가 쓸 수 있는 import 범위) |
+| `app/deps.py` | exe 에 넣을 모듈 목록(받은 코드가 쓸 수 있는 import 범위). 표준 라이브러리도 여기 없으면 exe 에서 import 오류 → 런처가 받은 코드를 지우고 기본 코드로 실행 |
 | `app/ui/` | 오버레이 UI: `index.html`, `app.js`(노트·바·스페이스·일정 팝업), `calendar.js`, `markdown.js`, `style.css`, `vendor/editor.js` |
 | `app/editor/` | CodeMirror 6 라이브 프리뷰 편집기 소스 → `build.bat`(Node) → `ui/vendor/editor.js`. 배포 zip 제외 |
 | `build.bat` | PyInstaller 로 런처 exe 빌드, 기본 코드 `version.json` = 마지막 태그. Inno Setup 6 있으면 `installer.iss` → `dist\dogani-setup.exe` |
@@ -75,7 +75,7 @@
 ### 3.3 스페이스 `스페이스/.dogani/`
 - `space.json`: `{id(hex16), created}` (v26.11.17 이전 `vault.json` → 열 때 복사, id 유지. 예전 파일은 남김) — 스페이스 열 때 없거나 id 형식이 틀리면 새로 만듦(id 는 키 파일 이름). 스페이스를 따라다니는 설정만 둠 (비밀값·PC별 값 금지)
 - `team.json` (팀스페이스만): `name, members{id: name, admin, perm, min_iat, joined, addr, last_seen}`. `perm` = `read` 일 때만 저장(없으면 write, 관리자는 항상 write)
-- `authors.json` (팀스페이스만): `{일정 줄(앞뒤 공백 제거): {by, at, mod, mod_at}}` — 팀원 id·유닉스 초. 호스트가 일정 파일 저장 때 전후 줄을 비교(difflib)해 바뀐 줄 = 수정자, 새 줄 = 작성자로 기록, 파일에 없는 줄은 지움. 옵시디언에서 직접 고친 줄은 기록 없음
+- `authors.json` (팀스페이스만): `{일정 줄(앞뒤 공백 제거): {by, at, mod, mod_at}}` — 팀원 id·유닉스 초. 호스트가 일정 파일 저장 때 전후 줄을 비교(앞뒤 같은 줄을 뺀 가운데 = 바뀐 구간)해 바뀐 줄 = 수정자, 새 줄 = 작성자로 기록, 파일에 없는 줄은 지움. 옵시디언에서 직접 고친 줄은 기록 없음
 
 ### 3.4 PC 설정 `%APPDATA%\dogani\dogani.json` (`DOGANI_HOME` 으로 변경)
 `name, space_dir(지금 개인 스페이스 폴더), space_dirs[](최근, 10개), space_names{}(폴더 → 붙인 개인 스페이스 이름, 없으면 폴더명), port(8765), space(지금 보는 스페이스 키 me|team, 트레이에서 고름), cal_hidden[](일정 숨긴 스페이스 키·`#태그`, `#` = 태그 없는 일정, 100개까지), windows(note|cal → pos·panel·open·screens), on_top, opacity, theme, team, team_host, team_space_dir`
@@ -167,7 +167,7 @@
 - 호스트가 꺼지면 팀스페이스만 안 보임·수정 불가 (파일이 호스트 PC 에만 있음). 오프라인 편집·동기화 없음
 - 통신은 평문 HTTP: 같은 망에서 엿보면 노트·토큰이 보임 (사내망 기준). Ed25519 는 직접 구현이라 상수시간 아님
 - 같은 일정 판정이 줄 원문 기준이라, 한쪽 스페이스 줄만 고치면(예: 옵시디언에서) 두 개로 갈라져 보임
-- 작성자 기록은 줄 원문이 키. 여러 줄을 한꺼번에 바꾸면 diff 짝짓기가 드물게 엉뚱한 줄을 '수정'으로 봄. 기록 전부터 있던 줄은 작성자 빈칸
+- 작성자 기록은 줄 원문이 키. 떨어진 여러 곳을 한 번에 바꾸면 가운데 구간을 위치로 짝지어 '수정' 대신 '작성'으로 보거나 엉뚱한 줄을 '수정'으로 볼 수 있음. 기록 전부터 있던 줄은 작성자 빈칸
 - 일정 수정은 `/sched-doc` 파일(올해 것)만. 다른 일정 파일의 일정은 "못 찾음" → `일정 편집` 에서 고침. 같은 내용 줄이 여러 개면 첫 줄. 고친 줄은 팝업 형식으로 다시 씀(날짜 `YYMMDD`, 제목의 `**`·`==` 사라짐, 쉼표 → 공백)
 - 호스트 IP 재탐색은 같은 망에서 이름 찾기가 될 때만 (한글 PC 이름·다른 서브넷은 실패 → `호스트 주소 바꾸기`). 팀원이 호스트보다 먼저 업데이트되면 그 사이 재탐색 안 됨(예전 호스트는 `/hello` 서명이 없음)
 - 업데이트 확인은 켤 때 런처가 1회 (최대 5초). 며칠씩 안 끄는 PC 는 업데이트를 못 받음. GitHub 한도(IP당 60회/시) 넘으면 지금 버전 실행
