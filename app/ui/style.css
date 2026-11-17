@@ -545,22 +545,6 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .copy-prev:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .copy-prev span { color: var(--text-muted); font-size: 12px; }
 
-/* 위쪽 막대 왼쪽: 보고 있는 스페이스 이름 + 연결 점 (고르기는 트레이) */
-.bar-space {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 34%;
-  padding: 0 6px 0 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  white-space: nowrap;
-  flex: none;
-}
-.bar-space-name { overflow: hidden; text-overflow: ellipsis; }
-body.space-team .bar-space-name { color: var(--text); }
-
 /* 할일·달력 창: 이름 없이 위쪽 막대 하나 (드래그 이동 + 진행 막대 / 달 이동 + 닫기) */
 .panel-bar {
   display: flex;

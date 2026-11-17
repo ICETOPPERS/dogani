@@ -70,7 +70,6 @@
   function setStatus(status) {
     if (state.status === status) return;
     state.status = status;
-    renderSpaceLabel();
     if (bridge && state.space) bridge.setStatus(state.space.key, status);
   }
 
@@ -487,19 +486,6 @@
     $("view-doc").hidden = view !== "doc";
     if (view === "doc") doc.load(false);
     else loadMonth();
-  }
-
-  // ------------------------------------------------------------ 위쪽 막대의 스페이스 이름 (고르기는 트레이 메뉴)
-  function renderSpaceLabel() {
-    const sp = state.space;
-    if (!sp) return;
-    for (const el of document.querySelectorAll(".bar-space")) {
-      el.querySelector(".bar-space-name").textContent = sp.name;
-      const dot = el.querySelector(".dot");
-      for (const s of ["online", "blocked"]) dot.classList.toggle(s, state.status === s);
-      el.title = `${sp.kind === "team" ? "팀스페이스" : "개인 스페이스"}: ${sp.name}${state.status === "blocked" ? " (로그인 풀림)" : state.status === "online" ? "" : " (연결 안 됨)"}
-바꾸기: 트레이 메뉴`;
-    }
   }
 
   // ------------------------------------------------------------ edit permission
@@ -1006,7 +992,6 @@
         if (moved) { note.exit(); doc.exit(); }
         state.space = cfg.space;
         document.body.classList.toggle("space-team", cfg.space.kind === "team");
-        renderSpaceLabel();
       }
 
       if (moved) {
