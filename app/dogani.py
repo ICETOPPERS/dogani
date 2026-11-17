@@ -1,9 +1,9 @@
 """
-dogani - 스페이스(폴더) 단위 할일·일정 오버레이 + 사내망 팀 스페이스
+dogani - 스페이스(폴더) 단위 할일·일정 오버레이 + 사내망 팀스페이스
 
-- 화면: 네비게이션 바 하나 + 할일 창 + 달력 창. 바의 이름을 누르면 스페이스(팀 스페이스/내 스페이스)를 고른다
-- 내 스페이스: 이 PC 의 폴더 하나 (스페이스 열기로 바꿈, 남에게 공유 안 함). space.py 참고
-- 팀 스페이스: 팀 호스트 PC 의 스페이스 (팀원 모두 편집). team.py 참고
+- 화면: 네비게이션 바 하나 + 할일 창 + 달력 창. 바의 이름을 누르면 스페이스(팀스페이스/개인 스페이스)를 고른다
+- 개인 스페이스: 이 PC 의 폴더 하나 (스페이스 열기로 바꿈, 남에게 공유 안 함). space.py 참고
+- 팀스페이스: 팀 호스트 PC 의 스페이스 (팀원 모두 편집). team.py 참고
 - 시스템 트레이(Win32 기본 메뉴)로 표시 / 이름 / 팀 / 스페이스 / 자동 실행 / 종료
 """
 import argparse
@@ -41,14 +41,14 @@ APP_NAME = "dogani"
 CONFIG_DIR = os.environ.get("DOGANI_HOME") or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "dogani")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "dogani.json")
 TEAM_DIR = os.path.join(CONFIG_DIR, "team")   # 팀 호스트의 서명 키·초대장 (스페이스 id 별). 예전엔 팀 데이터 전부
-LEGACY_TEAM_SPACE = os.path.join(TEAM_DIR, "notes")   # v26.11.10 이전 공용 노트 폴더 = 기본 팀 스페이스
+LEGACY_TEAM_SPACE = os.path.join(TEAM_DIR, "notes")   # v26.11.10 이전 공용 노트 폴더 = 기본 팀스페이스
 RECENT_MAX = 10
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # exe 면 런처(launcher.py)가 고른 코드 폴더
 UI_DIR = os.path.join(BASE_DIR, "ui")
 DEFAULT_PORT = 8765
 OPACITY_LEVELS = [100, 90, 80, 70, 60]
-ME = "me"      # 내 스페이스 키
-TEAM = "team"  # 팀 스페이스 키
+ME = "me"      # 개인 스페이스 키
+TEAM = "team"  # 팀스페이스 키
 TEAM_POLL_MS = 20_000
 
 TEAM_STATUS = {"online": "연결됨", "offline": "호스트 연결 끊김", "logged_out": "다시 로그인 필요"}
@@ -56,12 +56,12 @@ TEAM_STATUS = {"online": "연결됨", "offline": "호스트 연결 끊김", "log
 EMPTY_TEAM = {"host": "", "token": "", "id": "", "pub": "", "team": "", "members": []}
 DEFAULT_CONFIG = {
     "port": DEFAULT_PORT,
-    "space_dir": "",          # 지금 연 내 스페이스 (폴더)
+    "space_dir": "",          # 지금 연 개인 스페이스 (폴더)
     "space_dirs": [],         # 최근 연 스페이스 (최근 것 먼저)
     "name": "",           # 내 이름 (팀원에게 보이는 이름)
     "team": dict(EMPTY_TEAM),
     "team_host": False,   # 이 PC 가 팀 호스트
-    "team_space_dir": "",     # 팀 호스트일 때 팀 스페이스 폴더
+    "team_space_dir": "",     # 팀 호스트일 때 팀스페이스 폴더
     "visible": True,
     "space": ME,          # 지금 보고 있는 스페이스 (me | team)
     "cal_hidden": [],     # 달력·할일 일정에서 숨긴 스페이스 키 (화면 공유할 때 내 일정 숨기기 등)
@@ -145,7 +145,7 @@ def migrate_old_config():
     return cfg
 
 
-# 예전 이름(볼트)도 같이 저장: 같은 PC 에서 예전 exe 를 켜도(업데이트 전·소스 실행과 번갈아) 폴더·팀 스페이스를 잃지 않게
+# 예전 이름(볼트)도 같이 저장: 같은 PC 에서 예전 exe 를 켜도(업데이트 전·소스 실행과 번갈아) 폴더·팀스페이스를 잃지 않게
 # (team_vault 를 잃으면 예전 exe 가 기본 폴더로 호스트를 켜 새 키 → 팀원 전원 로그아웃). 모두 업데이트된 뒤 지워도 됨
 LEGACY_KEYS = (("vault", "space_dir"), ("vaults", "space_dirs"), ("team_vault", "team_space_dir"))
 
@@ -384,7 +384,7 @@ class Tray(QObject):
                 pystray.Menu.SEPARATOR,
                 Item("팀원", pystray.Menu(lambda: self.member_items())),
                 Item("팀 이름 바꾸기...", self.emit("rename_team")),
-                Item(f"팀 스페이스 폴더 열기 ({team.root})", self.emit("open_team_dir")),
+                Item(f"팀스페이스 폴더 열기 ({team.root})", self.emit("open_team_dir")),
                 pystray.Menu.SEPARATOR,
                 Item("팀 호스트 끄기", self.emit("stop_host")),
             )
@@ -398,20 +398,20 @@ class Tray(QObject):
         return pystray.Menu(
             Item("팀 참여... (초대장)", self.emit("join_team")),
             pystray.Menu.SEPARATOR,
-            Item("이 PC 를 팀 호스트로 (팀 스페이스 폴더 고르기)...", self.emit("start_host"), enabled=bool(app.share)),
+            Item("이 PC 를 팀 호스트로 (팀스페이스 폴더 고르기)...", self.emit("start_host"), enabled=bool(app.share)),
         )
 
     def build_menu(self):
         Item = pystray.MenuItem
         app, cfg = self.app, self.app.cfg
         share = app.share
-        space_label = f"내 스페이스: {space.space_name(cfg['space_dir'])}" if cfg["space_dir"] else "내 스페이스: (안 열림)"
+        space_label = f"개인: {space.space_name(cfg['space_dir'])}" if cfg["space_dir"] else "개인: (안 열림)"
         if share and share.team:
-            team_label = f"팀 스페이스: {share.team.name} (호스트)"
+            team_label = f"팀스페이스: {share.team.name} (호스트)"
         elif cfg["team"].get("token"):
-            team_label = f"팀 스페이스: {cfg['team'].get('team') or '팀'} ({TEAM_STATUS.get(app.team_status, '')})"
+            team_label = f"팀스페이스: {cfg['team'].get('team') or '팀'} ({TEAM_STATUS.get(app.team_status, '')})"
         else:
-            team_label = "팀 스페이스: 참여 안 함"
+            team_label = "팀스페이스: 참여 안 함"
         return [
             Item("dogani 표시", self.emit("toggle_visible"), checked=lambda i: cfg["visible"], default=True),
             Item(f"내 이름: {cfg['name']}", pystray.Menu(Item("이름 바꾸기...", self.emit("rename")))),
@@ -969,7 +969,7 @@ class doganiApp(QObject):
         cfg, t = self.cfg, self.cfg["team"]
         out = []
         if self.in_team():
-            out.append({"key": TEAM, "group": "team", "name": t.get("team") or "팀 스페이스", "server": t["host"],
+            out.append({"key": TEAM, "group": "team", "name": t.get("team") or "팀스페이스", "server": t["host"],
                         "prefix": "/api/team", "kind": "team",
                         "status": (self.status.get(TEAM) or "online") if self.team_status == "online" else
                         ("blocked" if self.team_status == "logged_out" else "offline")})
@@ -1134,17 +1134,17 @@ class doganiApp(QObject):
 
     # ------------------------------------------------------------ team (host)
     def pick_team_space_dir(self):
-        """팀 스페이스로 쓸 폴더 고르기 → 경로 또는 "" (내 스페이스와 겹치면 안 됨: 개인 노트가 팀에 공개됨)"""
+        """팀스페이스로 쓸 폴더 고르기 → 경로 또는 "" (개인 스페이스와 겹치면 안 됨: 개인 노트가 팀에 공개됨)"""
         start = self.cfg["team_space_dir"] or (LEGACY_TEAM_SPACE if os.path.isdir(LEGACY_TEAM_SPACE) else os.path.expanduser("~"))
         while True:
-            path = QFileDialog.getExistingDirectory(None, "팀 스페이스 폴더 선택 (팀원 모두에게 공개·편집됨)", start)
+            path = QFileDialog.getExistingDirectory(None, "팀스페이스 폴더 선택 (팀원 모두에게 공개·편집됨)", start)
             if not path:
                 return ""
             path = os.path.normpath(path)
             mine = self.cfg["space_dir"]
             if mine and overlaps(path, mine):
-                QMessageBox.warning(None, APP_NAME, "내 스페이스와 겹치는 폴더는 팀 스페이스로 쓸 수 없습니다.\n"
-                                    "(내 스페이스 노트가 팀원에게 공개됨) 따로 빈 폴더를 만들어 고르세요.")
+                QMessageBox.warning(None, APP_NAME, "개인 스페이스와 겹치는 폴더는 팀스페이스로 쓸 수 없습니다.\n"
+                                    "(개인 스페이스 노트가 팀원에게 공개됨) 따로 빈 폴더를 만들어 고르세요.")
                 start = path
                 continue
             return path
@@ -1162,21 +1162,21 @@ class doganiApp(QObject):
             if not root:
                 return
         if self.cfg["space_dir"] and overlaps(root, self.cfg["space_dir"]):
-            QMessageBox.warning(None, APP_NAME, "내 스페이스와 겹치는 폴더는 팀 스페이스로 열 수 없습니다.\n"
-                                f"팀 스페이스: {root}\n내 스페이스: {self.cfg['space_dir']}")
+            QMessageBox.warning(None, APP_NAME, "개인 스페이스와 겹치는 폴더는 팀스페이스로 열 수 없습니다.\n"
+                                f"팀스페이스: {root}\n개인 스페이스: {self.cfg['space_dir']}")
             return
         if quiet and not os.path.isdir(root):
             # 폴더가 옮겨졌거나 드라이브가 아직 안 붙음 → 새로 만들면 새 스페이스 id·새 키 = 팀원 모두 로그아웃. 켜지 않고 알림
-            QMessageBox.warning(None, APP_NAME, f"팀 스페이스 폴더가 없어 팀 호스트를 켜지 않았습니다.\n{root}\n\n"
-                                "폴더를 되돌린 뒤 다시 실행하거나, 트레이 > 팀 스페이스 에서 다시 고르세요.")
+            QMessageBox.warning(None, APP_NAME, f"팀스페이스 폴더가 없어 팀 호스트를 켜지 않았습니다.\n{root}\n\n"
+                                "폴더를 되돌린 뒤 다시 실행하거나, 트레이 > 팀스페이스 에서 다시 고르세요.")
             return
-        # 예전 팀 데이터(team\team.json)는 예전 공용 노트 폴더를 팀 스페이스로 열 때만 가져옴 (노트와 팀원이 갈라지지 않게)
+        # 예전 팀 데이터(team\team.json)는 예전 공용 노트 폴더를 팀스페이스로 열 때만 가져옴 (노트와 팀원이 갈라지지 않게)
         legacy = TEAM_DIR if os.path.normcase(os.path.abspath(root)) == os.path.normcase(os.path.abspath(LEGACY_TEAM_SPACE)) else None
         try:
             os.makedirs(root, exist_ok=True)
             host = TeamHost(root, TEAM_DIR, self.cfg["name"], legacy_dir=legacy)
         except OSError as e:
-            QMessageBox.warning(None, APP_NAME, f"팀 스페이스를 열 수 없습니다.\n{e}")
+            QMessageBox.warning(None, APP_NAME, f"팀스페이스를 열 수 없습니다.\n{e}")
             return
         self.share.team = host
         self.cfg["team_host"] = True
@@ -1189,14 +1189,14 @@ class doganiApp(QObject):
         if not quiet:
             QMessageBox.information(
                 None, APP_NAME,
-                f"팀 호스트를 열었습니다.\n\n팀원 초대: 트레이 > 팀 스페이스 > 새 팀원 초대장 만들기\n"
+                f"팀 호스트를 열었습니다.\n\n팀원 초대: 트레이 > 팀스페이스 > 새 팀원 초대장 만들기\n"
                 f"  → 호스트 주소({self.share.address})와 초대장 코드가 복사되니 그 사람에게 보내 주세요.\n"
                 "  (사람마다 하나씩, 15분 안에 한 번만 쓸 수 있음)\n\n"
-                "이 PC 가 꺼져 있으면 팀 스페이스를 볼 수 없으니, 켜 두는 시간이 긴 PC 를 추천합니다.")
+                "이 PC 가 꺼져 있으면 팀스페이스를 볼 수 없으니, 켜 두는 시간이 긴 PC 를 추천합니다.")
 
     def stop_host(self):
-        if QMessageBox.question(None, APP_NAME, "팀 호스트를 끌까요?\n팀원들은 팀 스페이스를 볼 수 없게 됩니다.\n"
-                                f"(팀 스페이스 {self.cfg['team_space_dir']} 와 키는 남아 있어서 다시 켜면 그대로 돌아옵니다.)"
+        if QMessageBox.question(None, APP_NAME, "팀 호스트를 끌까요?\n팀원들은 팀스페이스를 볼 수 없게 됩니다.\n"
+                                f"(팀스페이스 {self.cfg['team_space_dir']} 와 키는 남아 있어서 다시 켜면 그대로 돌아옵니다.)"
                                 ) != QMessageBox.StandardButton.Yes:
             return
         if self.share:
@@ -1333,8 +1333,8 @@ class doganiApp(QObject):
     def switch_space_dir(self, path):
         team_root = self.share.team.root if self.share and self.share.team else ""
         if team_root and overlaps(path, team_root):
-            QMessageBox.warning(None, APP_NAME, "팀 스페이스와 겹치는 폴더는 내 스페이스로 열 수 없습니다.\n"
-                                "(팀 스페이스는 바의 스페이스 메뉴에서 고르세요)")
+            QMessageBox.warning(None, APP_NAME, "팀스페이스와 겹치는 폴더는 개인 스페이스로 열 수 없습니다.\n"
+                                "(팀스페이스는 바의 스페이스 메뉴에서 고르세요)")
             return
         if not os.path.isdir(path):
             if QMessageBox.question(None, APP_NAME, f"폴더가 없습니다.\n{path}\n\n최근 목록에서 뺄까요?"
@@ -1386,7 +1386,7 @@ class doganiApp(QObject):
         elif name == "cancel_invite" and team:
             team.cancel_invite(arg)
         elif name == "rename_team" and team:
-            text, ok = QInputDialog.getText(None, "팀 이름", "팀 스페이스 이름", QLineEdit.EchoMode.Normal, team.name)
+            text, ok = QInputDialog.getText(None, "팀 이름", "팀스페이스 이름", QLineEdit.EchoMode.Normal, team.name)
             if ok and clean_name(text):
                 team.rename_team(text)
                 self.poll_team()
@@ -1440,7 +1440,7 @@ def single_instance(name="DoganiMutex"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="dogani - 스페이스 할일·일정 오버레이 + 팀 스페이스")
+    parser = argparse.ArgumentParser(description="dogani - 스페이스 할일·일정 오버레이 + 팀스페이스")
     parser.add_argument("--dir", help="열 스페이스(노트 폴더) 경로")
     parser.add_argument("--port", type=int, help=f"포트 (기본 {DEFAULT_PORT}, 팀 호스트 주소에 씀)")
     parser.add_argument("--name", help="내 이름")

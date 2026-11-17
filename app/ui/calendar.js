@@ -79,17 +79,9 @@
   const q = (ev) => (ev.uncertain ? "쯤" : "");  // TODO 로캘: 영어면 "~10:00" 등
   const timeText = (ev) => (ev.time || "") + q(ev);
   const shortTime = (ev) => (ev.time || "").split("-")[0] + q(ev);
-  // 스페이스가 둘 이상 보이면(ev.spaceMarks) 툴팁 앞에 [스페이스 이름들]
+  // 스페이스가 둘 이상 보이면(ev.spaceMarks) 툴팁 앞에 [스페이스 이름들]. 스페이스 색은 달력 위 칩에 마우스를 올릴 때만 (app.js)
   const evAttrs = (ev, cls) => `class="${cls.join(" ")}" data-k="${ev.k ?? ""}" style="--ev:${eventColor(ev)}" ` +
     `title="${esc((ev.spaceMarks ? `[${ev.spaceMarks.map((m) => m.name).join(" · ")}] ` : "") + eventTip(ev))}"`;
-  /** 어느 스페이스 일정인지: 앞에 작은 색 막대 (여러 스페이스면 세로로 나눠 칠함) */
-  function spaceMark(ev) {
-    const m = ev.spaceMarks;
-    if (!m || !m.length) return "";
-    const step = 100 / m.length;
-    const bg = m.length === 1 ? m[0].color : `linear-gradient(${m.map((x, k) => `${x.color} ${k * step}% ${(k + 1) * step}%`).join(", ")})`;
-    return `<b class="spm${m.length > 1 ? " multi" : ""}" style="background:${bg}"></b>`;
-  }
 
   /** 노트 위 일정 줄용 칩 (시간·장소까지) */
   function chip(ev) {
@@ -99,22 +91,26 @@
     if (ev.uncertain) cls.push("unsure");
     const time = ev.time ? `<span class="ev-time">${esc(timeText(ev))}</span>` : "";
     const place = ev.place ? `<span class="ev-place">@${esc(ev.place)}</span>` : "";
-    return `<span ${evAttrs(ev, cls)}>${spaceMark(ev)}${time}${esc(ev.title)}${place}</span>`;
+    return `<span ${evAttrs(ev, cls)}>${time}${flag(ev)}${esc(ev.title)}${place}</span>`;
   }
 
-  /** 달력 칸 하루짜리 일정: 굵게 아니고 시간 있으면 "● 15:00 제목", 아니면 칩 */
+  const FLAG = '<svg class="ev-flag" viewBox="0 0 12 12"><path d="M2.5 1v10.5M2.5 1.5h7l-1.8 2.75L9.5 7h-7"/></svg>';
+  const flag = (ev) => (ev.important ? FLAG : "");
+
+  /** 달력 칸 하루짜리 일정: 쉬는 날 아니고 시간 있으면 "[15:00] 제목"(시간만 종일 일정과 같은 네모), 아니면 칸 너비 칩 */
   function dayItem(ev) {
     const time = ev.time ? `<span class="ev-time">${esc(shortTime(ev))}</span>` : "";
-    if (ev.time && !ev.important && !ev.holiday) {
-      const cls = ["ev", "ev-dot"];
-      if (ev.uncertain) cls.push("unsure");  // ○ 속 빈 점 + 옅은 글씨
-      return `<span ${evAttrs(ev, cls)}>${spaceMark(ev)}<i></i>${time}${esc(ev.title)}</span>`;
+    if (ev.time && !ev.holiday) {
+      const cls = ["ev", "ev-timed"];
+      if (ev.important) cls.push("important");
+      if (ev.uncertain) cls.push("unsure");  // 시간 네모 테두리만 + 옅은 글씨
+      return `<span ${evAttrs(ev, cls)}>${time}${flag(ev)}${esc(ev.title)}</span>`;
     }
     const cls = ["ev"];
     if (ev.important) cls.push("important");
     if (ev.holiday) cls.push("holiday");
     if (ev.uncertain) cls.push("unsure");
-    return `<span ${evAttrs(ev, cls)}>${spaceMark(ev)}${time}${esc(ev.title)}</span>`;
+    return `<span ${evAttrs(ev, cls)}>${time}${flag(ev)}${esc(ev.title)}</span>`;
   }
 
   /**
@@ -134,7 +130,7 @@
     if (fadeOut) cls.push("fade-out");
     const cut = (head ? 5 : 0) + (tail ? 5 : 0);
     const style = `width:calc(${n} * 100% + ${n - 1} * var(--cal-gap) - ${cut}px);--n:${n}`;
-    let label = `<span class="bar-label">${spaceMark(ev)}${esc(ev.title)}</span>`;
+    let label = `<span class="bar-label">${esc(ev.title)}</span>`;
     if (ev.italic) {
       label = (head && !fadeIn ? '<i class="ah l"></i>' : "") + '<i class="ln"></i>' + label +
         '<i class="ln"></i>' + (tail && !fadeOut ? '<i class="ah r"></i>' : "");

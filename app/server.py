@@ -3,7 +3,7 @@
 
 - 스페이스 폴더(데일리 노트 YYMMDD 요일.md + 일정 파일)를 감시하다가 변경되면 SSE 로 창에 푸시
 - 개인 스페이스 /api/* : 같은 PC(나)에서 온 요청만 (남에게 공유하지 않음)
-- 팀 스페이스 /api/team/* : 이 PC 가 팀 호스트일 때 팀원(토큰)에게 공개, 팀원 모두 편집
+- 팀스페이스 /api/team/* : 이 PC 가 팀 호스트일 때 팀원(토큰)에게 공개, 팀원 모두 편집
 """
 import datetime as dt
 import json
@@ -301,7 +301,7 @@ def publish(store, hub):
 
 # ---------------------------------------------------------------- clients / SSE
 class Hub:
-    """SSE 구독자 관리 (개인 스페이스 창 / 팀 스페이스 팀원)"""
+    """SSE 구독자 관리 (개인 스페이스 창 / 팀스페이스 팀원)"""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -433,7 +433,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._stream(share.hub, ctx)
         self._space(method, path, qs, share.store, share.hub, writable=True)
 
-    # ------------------------------------------------------------ 팀 스페이스
+    # ------------------------------------------------------------ 팀스페이스
     def _team(self, method, path, qs, ctx):
         team = self.share.team
         if not team:
@@ -542,7 +542,7 @@ def local_ip():
 
 
 class ShareServer:
-    """HTTP 서버 + 폴더 감시 (개인 스페이스 + 팀 호스트면 팀 스페이스). start() 가 포트를 못 열면 OSError."""
+    """HTTP 서버 + 폴더 감시 (개인 스페이스 + 팀 호스트면 팀스페이스). start() 가 포트를 못 열면 OSError."""
 
     def __init__(self, port, space_dir, name=""):
         self.port = port

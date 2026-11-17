@@ -60,8 +60,8 @@
     offline: "연결할 수 없습니다.",
     paused: "상대방이 공유를 일시 중지했습니다.",
     blocked: "상대방이 접속을 차단했습니다.",
-    team_only: "팀원에게만 공유하는 노트입니다. (트레이 > 팀 스페이스 > 팀 참여)",
-    not_member: "팀 로그인이 필요합니다. (트레이 > 팀 스페이스)",
+    team_only: "팀원에게만 공유하는 노트입니다. (트레이 > 팀스페이스 > 팀 참여)",
+    not_member: "팀 로그인이 필요합니다. (트레이 > 팀스페이스)",
     client_only: "접속 키가 맞지 않습니다. (dogani 버전 확인)",
     conflict: "그 사이 다른 곳(옵시디언·다른 팀원)에서 수정되어 저장하지 않았습니다. 다시 불러옵니다.",
     read_only: "편집 권한이 없습니다.",
@@ -142,7 +142,7 @@
   const shownSpaces = () => schedSpaces().filter((s) => !state.calHidden.has(s.key));
   /** 일정을 고칠 수 있음 = 쓰기 권한 + 그 일정이 있는 스페이스가 모두 연결됨 (꺼진 호스트에 쓰다 멈추지 않게) */
   const canEdit = (ev) => state.writable && (ev.spaces || []).every((k) => { const sp = spaceByKey(k); return sp && sp.status === "online"; });
-  /** 스페이스 표시 색: 내 스페이스 = 회색, 팀 = 이름 해시 색 (태그 색과 같은 방식) */
+  /** 스페이스 표시 색: 개인 스페이스 = 회색, 팀 = 이름 해시 색 (태그 색과 같은 방식) */
   const spaceColor = (sp) => (!sp || sp.kind === "me" ? "var(--sp-me)" : `hsl(${CAL.tagHue("space:" + sp.name)} 55% 55%)`);
 
   async function loadSchedule(sp) {
@@ -194,7 +194,7 @@
     const box = $("cal-spaces");
     const list = schedSpaces();
     box.hidden = !list.length;
-    box.innerHTML = list.map((sp) => `<label title="${esc(sp.kind === "me" ? "내 스페이스" : "팀 스페이스")} 일정 보이기"><input type="checkbox" data-key="${esc(sp.key)}"${state.calHidden.has(sp.key) ? "" : " checked"}>` +
+    box.innerHTML = list.map((sp) => `<label title="${esc(sp.kind === "me" ? "개인" : "팀스페이스")} 일정 보이기"><input type="checkbox" data-key="${esc(sp.key)}"${state.calHidden.has(sp.key) ? "" : " checked"}>` +
       `<i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
   }
 
@@ -465,7 +465,7 @@
   }
 
   // ------------------------------------------------------------ nav (네비게이션 바 + 스페이스 메뉴)
-  const GROUPS = [["team", "팀 스페이스"], ["me", "내 스페이스"]];
+  const GROUPS = [["team", "팀스페이스"], ["me", "개인"]];
 
   function renderNav(cfg) {
     const sp = state.space;
@@ -473,7 +473,7 @@
     const dot = $("status-dot");
     for (const s of ["online", "paused", "blocked"]) dot.classList.toggle(s, (sp.status === "team_only" ? "blocked" : sp.status) === s);
     $("space-name").textContent = sp.name;
-    $("nav").title = `${sp.kind === "team" ? "팀 스페이스" : "내 스페이스"} · 드래그해서 이동`;
+    $("nav").title = `${sp.kind === "team" ? "팀스페이스" : "개인"} · 드래그해서 이동`;
     renderMenu(cfg);
     reportNavSize();
   }
@@ -484,7 +484,7 @@
     for (const [group, title] of GROUPS) {
       const items = state.spaces.filter((s) => s.group === group);
       if (group === "team" && !items.length) {
-        html += `<div class="sm-title">팀 스페이스</div>`;
+        html += `<div class="sm-title">팀스페이스</div>`;
         html += `<button class="sm-item sm-action" data-action="join_team"><span class="sm-glyph">+</span><span class="sm-name">팀 참여하기...</span></button>`;
         if ((cfg || {}).teamState === "none") {
           html += `<button class="sm-item sm-action" data-action="start_host"><span class="sm-glyph">⌂</span><span class="sm-name">새 팀 만들기 (이 PC 가 호스트)...</span></button>`;
@@ -729,7 +729,7 @@
       const keys = ev ? ev.spaces || [] : [state.space && state.space.key];
       // 지금 보는 스페이스는 숨겼어도 고를 수 있게 (화면 공유 중에 새 일정 추가)
       const cur = state.space && !state.calHidden.has(state.space.key) ? null : schedSpaces().find((s) => state.space && s.key === state.space.key);
-      $("ev-add-spaces").innerHTML = (cur ? [cur, ...shownSpaces()] : shownSpaces()).map((sp) => `<label title="${sp.kind === "me" ? "내 스페이스" : "팀 스페이스"}">` +
+      $("ev-add-spaces").innerHTML = (cur ? [cur, ...shownSpaces()] : shownSpaces()).map((sp) => `<label title="${sp.kind === "me" ? "개인" : "팀스페이스"}">` +
         `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
@@ -901,6 +901,21 @@
     markRange(r);
     evAdd.open(r[0], r[1], e.clientX, e.clientY);
   });
+  // 스페이스 칩에 마우스 올림 = 그 스페이스 일정 표시 (평소엔 색을 안 그림)
+  function spaceHover(key) {
+    const grid = $("cal-grid"), sp = key && spaceByKey(key);
+    grid.classList.toggle("sp-hover", !!sp);
+    if (sp) grid.style.setProperty("--spc", spaceColor(sp));
+    for (const el of grid.querySelectorAll(".ev[data-k]")) {
+      const ev = evOf(el);
+      el.classList.toggle("sp-on", !!(sp && ev && (ev.spaces || []).includes(key)));
+    }
+  }
+  $("cal-spaces").addEventListener("mouseover", (e) => {
+    const inp = e.target.closest("label") && e.target.closest("label").querySelector("input");
+    spaceHover(inp && inp.checked ? inp.dataset.key : null);
+  });
+  $("cal-spaces").addEventListener("mouseleave", () => spaceHover(null));
   $("cal-spaces").addEventListener("change", (e) => {
     const key = e.target.dataset.key;
     if (!key) return;

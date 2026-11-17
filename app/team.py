@@ -1,8 +1,8 @@
 """
-팀 스페이스 (팀원이 같이 쓰는 폴더 + 팀원 식별)
+팀스페이스 (팀원이 같이 쓰는 폴더 + 팀원 식별)
 
 - 팀 호스트: 팀원 중 한 사람의 dogani 가 맡는다 (켜 두는 시간이 긴 PC 추천).
-  팀 스페이스 = 호스트 PC 의 폴더 하나 (개인 스페이스와 같은 형식, space.py). 노트·일정은 평범한 md 파일
+  팀스페이스 = 호스트 PC 의 폴더 하나 (개인 스페이스와 같은 형식, space.py). 노트·일정은 평범한 md 파일
   팀 설정(이름·팀원)은 스페이스의 .dogani/team.json, 서명 키·초대장은 호스트 PC 의 %APPDATA%\\dogani\\team\\<스페이스id>.json
   (스페이스 폴더가 복사·동기화돼도 비밀값은 따라가지 않음)
 - 인증 (IT 회사가 아닌 사무실 수준):
@@ -95,7 +95,7 @@ class TeamError(Exception):
 
 # ---------------------------------------------------------------- host
 class TeamHost:
-    """팀 스페이스 + 팀 데이터: 스페이스/.dogani/team.json(이름·팀원) + 키 파일(서명 키·초대장, 이 PC 에만)"""
+    """팀스페이스 + 팀 데이터: 스페이스/.dogani/team.json(이름·팀원) + 키 파일(서명 키·초대장, 이 PC 에만)"""
 
     PRIVATE = ("sign_key", "invites")   # 스페이스에 두지 않는 값
 
@@ -137,7 +137,7 @@ class TeamHost:
             data = read(legacy) or {}
             data["_dirty"] = True
             data["_legacy"] = legacy
-        data.setdefault("name", "팀 스페이스")
+        data.setdefault("name", "팀스페이스")
         # 예전 HMAC 비밀키는 팀원 PC 에 퍼져 있어서 위조에 쓰일 수 있음 → 버리고 서명 키로 교체
         # (예전 토큰은 모두 무효, 팀원은 초대장으로 한 번 다시 참여)
         if "secret" in data or "sign_key" not in data:
