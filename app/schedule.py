@@ -27,6 +27,7 @@ _OPEN_START_RE = re.compile(r"^[-~]\s*" + _DATE + r"(?!\d)\s*(.*)$")       # -26
 _OPEN_END_RE = re.compile(r"^" + _DATE + r"\s*[-~](?=\s*$|\s+\d{1,2}:|\s*[^\d\s])\s*(.*)$")       # 261119- : 시작만, 끝 미정
 _LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\[.\]\s+)?")
 _MARK_RE = re.compile(r"\*|==")  # 굵게(**)·기울임(*)·하이라이트(==) 기호
+_WHO_RE = re.compile(r"\s+~([0-9a-f]{8})(?:>([0-9a-f]{8}))?\s*$")  # 줄 끝 작성자 꼬리표 " ~작성id" / " ~작성id>수정id" (팀스페이스)
 
 
 def is_schedule_file(name):
@@ -59,7 +60,8 @@ def _add_month(d):
 def parse_line(line):
     """한 줄 → 일정 dict. 일정 줄이 아니면 None."""
     raw = line.strip()  # 달력에서 수정할 때 파일에서 이 줄을 찾는 데 씀
-    line = _LIST_RE.sub("", line.strip(), count=1)
+    who = _WHO_RE.search(raw)
+    line = _LIST_RE.sub("", raw[:who.start()] if who else raw, count=1)
     if not line:  # 제목·인용 등 날짜로 시작하지 않는 줄은 아래 정규식에서 걸러짐
         return None
     fields = [f.strip() for f in re.split(r"[,，]", line)]
@@ -121,7 +123,27 @@ def parse_line(line):
         "important": important,
         "italic": italic,
         "raw": raw,
+        "by": who[1] if who else "",   # 작성 팀원 id (꼬리표)
+        "mod": (who[2] or "") if who else "",   # 마지막 수정 팀원 id
     }
+
+
+def stamp(old, new, mid):
+    """팀스페이스 일정 파일 저장 전: old 에 글자 그대로 없는 일정 줄에 작성자 꼬리표를 붙임.
+    꼬리표 없는 줄 = 새로 씀 → " ~mid", 꼬리표 있는 줄 = 고침(달력 수정이 원래 꼬리표를 넘김) → " ~작성id>mid".
+    그대로이거나 옮기기만 한 줄은 안 건드림. 지운 줄은 꼬리표도 같이 사라짐"""
+    keep = {l.strip() for l in (old or "").splitlines()}
+    out = []
+    for line in new.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        if body.strip() and body.strip() not in keep and parse_line(body):
+            who = _WHO_RE.search(body)
+            if who:
+                body = body[:who.start()] + (f" ~{who[1]}" if who[1] == mid else f" ~{who[1]}>{mid}")
+            else:
+                body = body.rstrip() + f" ~{mid}"
+        out.append(body + line[len(line.rstrip("\r\n")):])
+    return "".join(out)
 
 
 def sort_key(ev):

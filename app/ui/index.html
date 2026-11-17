@@ -33,7 +33,6 @@
           <div class="header-title" id="cal-title"></div>
           <button class="icon-btn" id="cal-next" title="다음 달">&#x203A;</button>
           <button class="text-btn" id="cal-today">오늘</button>
-          <button class="text-btn" id="cal-edit" title="일정 파일 편집">일정 편집</button>
           <button class="icon-btn close-btn" title="닫기">&#x2715;</button>
         </div>
         <!-- 달력에 일정을 보일 스페이스 (체크 끄면 숨김, 할일 창 일정 줄도 같이) -->
@@ -90,18 +89,6 @@
             <button type="submit" class="text-btn active" id="ev-add-ok">추가</button>
           </div>
         </form>
-      </div>
-
-      <!-- 달력 창 > 일정 편집 -->
-      <div id="view-doc" class="view" hidden>
-        <div class="panel-bar" title="드래그해서 이동">
-          <button class="text-btn" id="doc-back">&#x2039; 달력</button>
-          <div class="header-title" id="doc-title">일정</div>
-          <button class="icon-btn close-btn" title="닫기">&#x2715;</button>
-        </div>
-        <div class="doc-hint">한 줄 = <code>날짜, 제목, #태그, 장소, 메모</code> · <b>**굵게**</b> 중요 · <mark>==하이라이트==</mark> 쉬는 날 · <i>*기울임*</i> 기간 화살표</div>
-        <article id="doc-body" class="markdown-rendered"></article>
-        <footer class="view-footer" id="doc-footer"></footer>
       </div>
 
       <div id="resize-grip" title="크기 조절"></div>

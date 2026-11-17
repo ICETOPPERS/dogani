@@ -560,24 +560,8 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .panel-bar .header-title.is-today { color: var(--accent); }
 #view-note .progress-row { padding: 8px 14px 2px; }
 #view-note .progress-text:empty { display: none; }
-#view-note .panel-bar, #view-cal .panel-bar, #view-doc .panel-bar { padding-left: 6px; border-bottom: 1px solid var(--border); }
+#view-note .panel-bar, #view-cal .panel-bar { padding-left: 6px; border-bottom: 1px solid var(--border); }
 #note-sched { margin-top: 2px; }
-.doc-hint {
-  flex: none;
-  margin: 6px 14px 0;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  background: var(--bg-hover);
-  line-height: 1.6;
-}
-.doc-hint code { font-family: Consolas, "D2Coding", monospace; font-size: .95em; }
-.doc-hint mark { background: var(--mark); color: inherit; border-radius: 2px; }
-#doc-body .cm-scroller { font-family: inherit; line-height: 1.6; overflow-y: auto; }
-#doc-body .cm-content { padding: 8px 16px 40px; caret-color: var(--text); }
-#doc-body .cm-line { padding: 0; }
-#doc-body.has-editor { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 
 /* 스페이스 표시: 일정 앞 색 막대 (스페이스가 둘 이상 보일 때만), 달력 위 스페이스 체크 */
 :root { --sp-me: #8b93a1; }

@@ -78,10 +78,8 @@
     ].filter(Boolean).join("\n");
   }
 
-  /** 팀스페이스 일정의 작성·수정 팀원 (서버 authors.json) */
-  const ymd = (t) => { const d = new Date(t * 1000); return `${d.getMonth() + 1}/${d.getDate()}`; };
-  const whoText = (w) => [w.by && `작성 ${w.by}${w.at ? " " + ymd(w.at) : ""}`,
-    w.mod && `수정 ${w.mod}${w.mod_at ? " " + ymd(w.mod_at) : ""}`].filter(Boolean).join(" · ");
+  /** 팀스페이스 일정의 작성·수정 팀원 (줄 끝 꼬리표) */
+  const whoText = (w) => [w.by && `작성 ${w.by}`, w.mod && `수정 ${w.mod}`].filter(Boolean).join(" · ");
 
   const q = (ev) => (ev.uncertain ? "쯤" : "");  // TODO 로캘: 영어면 "~10:00" 등
   const timeText = (ev) => (ev.time || "") + q(ev);

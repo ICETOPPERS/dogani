@@ -26,7 +26,7 @@
     today: iso(new Date()),
     noteDate: iso(new Date()),
     calYM: iso(new Date()).slice(0, 7),
-    calView: "month",  // month | doc
+    calView: "month",
     status: "offline", // online | offline | blocked(팀 로그인 풀림)
     es: null,
     retryTimer: null,
@@ -117,7 +117,7 @@
 
   function refresh() {
     if (state.mode === "note") note.reloadIfIdle();
-    else if (state.mode === "cal") { if (state.calView === "doc") doc.reloadIfIdle(); else loadMonth(); }
+    else if (state.mode === "cal") loadMonth();
   }
 
   // ------------------------------------------------------------ schedule (보이는 스페이스들의 일정을 합쳐 그림)
@@ -499,23 +499,10 @@
     $("cal-footer").textContent = monthData.failed || `노트 ${r.notes}개 · 완료 ${r.done}/${r.total}`;
   }
 
-  const doc = DocPane({
-    body: $("doc-body"),
-    footer: $("doc-footer"),
-    key: () => state.base + "|sched",
-    fetch: () => api("/sched-doc"),
-    post: (key, content, base_mtime, base) => api("/sched-doc", { content, base_mtime }, base),
-    empty: (d) => (d.no_dir ? "스페이스 폴더가 지정되지 않았습니다." : state.writable ? "일정 파일이 없습니다.<br>클릭해서 작성" : "일정 파일이 없습니다."),
-    loaded: (d) => { $("doc-title").textContent = d.title || "일정"; },
-  });
-
   function setCalView(view) {
-    if (view !== "doc") doc.exit();
     state.calView = view;
     $("view-cal").hidden = view !== "month";
-    $("view-doc").hidden = view !== "doc";
-    if (view === "doc") doc.load(false);
-    else loadMonth();
+    loadMonth();
   }
 
   // ------------------------------------------------------------ edit permission
@@ -523,10 +510,8 @@
   function setWritable(w, soft) {
     state.writable = w;
     document.body.classList.toggle("writable", w);
-    if (!w && !soft) { note.exit(); doc.exit(); }
+    if (!w && !soft) note.exit();
     note.setReadOnly(!w);
-    doc.setReadOnly(!w);
-    $("cal-edit").hidden = false;
     refresh();
   }
 
@@ -549,23 +534,19 @@
   for (const btn of document.querySelectorAll(".close-btn")) {
     btn.addEventListener("click", () => {
       note.exit();
-      doc.exit();
       // 닫기 전에 저장이 끝나도록
-      Promise.all([note.save(), doc.save()]).then(() => { if (bridge) bridge.closePanel(); });
+      note.save().then(() => { if (bridge) bridge.closePanel(); });
     });
   }
   // 편집 영역 밖(바 등)을 누르거나 창이 포커스를 잃으면 편집 끝
   document.addEventListener("mousedown", (e) => {
     if (note.editing && !e.target.closest("#note-body")) note.exit();
-    if (doc.editing && !e.target.closest("#doc-body")) doc.exit();
   });
-  window.addEventListener("blur", () => { note.exit(); doc.exit(); });
+  window.addEventListener("blur", () => note.exit());
 
   $("cal-prev").addEventListener("click", () => { state.calYM = addMonths(state.calYM, -1); loadMonth(); });
   $("cal-next").addEventListener("click", () => { state.calYM = addMonths(state.calYM, 1); loadMonth(); });
   $("cal-today").addEventListener("click", () => { state.calYM = state.today.slice(0, 7); loadMonth(); });
-  $("cal-edit").addEventListener("click", () => setCalView("doc"));
-  $("doc-back").addEventListener("click", () => doc.save().then(() => setCalView("month")));
   $("cal-grid").addEventListener("click", (e) => {
     if (dragged) { dragged = false; return; }  // 드래그로 기간 고르거나 일정 옮긴 뒤의 click 은 무시
     const ev = evOf(e.target.closest(".ev[data-k]"));
@@ -587,6 +568,7 @@
   $("ev-add-t1").innerHTML = '<option value="">종일</option>' + TIMES.map((t) => `<option>${t}</option>`).join("");
   $("ev-add-t2").innerHTML = '<option value="">-</option>' + TIMES.map((t) => `<option>${t}</option>`).join("");
   const LIST_RE = /^(\s*(?:[-*+]|\d+[.)])\s+(?:\[.\]\s+)?)/;
+  const WHO_RE = /\s+~[0-9a-f]{8}(?:>[0-9a-f]{8})?\s*$/;   // 줄 끝 작성자 꼬리표 (schedule.py _WHO_RE)
   const yymmdd = (v) => v.slice(2).replace(/-/g, "");
   const cleanField = (v) => String(v || "").replace(/,/g, " ").trim();
   /** 일정 dict → 파일 한 줄 (팝업 입력값과 같은 모양: kind, s, e, t1, t2, about, bold, off, title, tags[], place, memo) */
@@ -647,10 +629,11 @@
           const lines = text.split("\n");
           mine.forEach((c, n) => {
             const i = lines.findIndex((l) => l.trim() === c.raw);
-            if (i < 0) throw new Error("일정 파일에서 이 줄을 찾지 못했습니다 (다른 일정 파일에 있거나 그 사이 바뀜). '일정 편집'에서 고쳐 주세요.");
+            if (i < 0) throw new Error("일정 파일에서 이 줄을 찾지 못했습니다 (다른 일정 파일에 있거나 그 사이 바뀜).");
             if (want && n === 0) {
               const lead = lines[i].match(/^\s*/)[0], m = lines[i].trim().match(LIST_RE);
-              lines[i] = lead + (m ? m[1] : "") + line + (lines[i].endsWith("\r") ? "\r" : "");
+              const who = (lines[i].match(WHO_RE) || [""])[0].trimEnd();   // 작성자 꼬리표 유지 → 서버가 수정자를 붙임
+              lines[i] = lead + (m ? m[1] : "") + line + who + (lines[i].endsWith("\r") ? "\r" : "");
             } else lines.splice(i, 1);
           });
           let out = lines.join("\n");
@@ -696,7 +679,7 @@
       const picks = shownTags();
       $("ev-add-tagpick").hidden = !picks.length;
       $("ev-add-tagpick").innerHTML = picks.map((t) => `<button type="button" data-tag="${esc(t)}"><i style="background:${tagColor(t)}"></i>${esc(t)}</button>`).join("");
-      // 멤버: 나·팀원·이 달에 쓴 이름. 만든 사람을 자동으로 넣지 않음 (만든 사람 기록은 따로 authors.json)
+      // 멤버: 나·팀원·이 달에 쓴 이름. 만든 사람을 자동으로 넣지 않음 (만든 사람은 서버가 줄 끝 꼬리표로)
       const mp = memberPicks();
       $("ev-add-mempick").hidden = !mp.length;
       $("ev-add-mempick").innerHTML = mp.map((m) => `<button type="button" data-tag="${esc(m)}">@${esc(m)}${meMark(m)}</button>`).join("");
@@ -1038,7 +1021,6 @@
         for (const m of ["note", "cal"]) document.body.classList.toggle("mode-" + m, m === cfg.mode);
         $("view-note").hidden = cfg.mode !== "note";
         $("view-cal").hidden = cfg.mode !== "cal";
-        $("view-doc").hidden = true;
       }
       if (cfg.spaces) state.spaces = cfg.spaces;
       if (cfg.calHidden) state.calHidden = new Set(cfg.calHidden);
@@ -1046,7 +1028,7 @@
       let moved = false;
       if (cfg.space) {
         moved = !sameSpace(cfg.space, state.space);
-        if (moved) { note.exit(); doc.exit(); }
+        if (moved) note.exit();
         state.space = cfg.space;
         document.body.classList.toggle("space-team", cfg.space.kind === "team");
       }

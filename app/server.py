@@ -472,10 +472,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable,
                                     "members": [m["name"] for m in team.members()]})   # @멤버 칩 후보
         self._space(method, path, qs, team.store, team.hub, writable=writable,
-                    after_sched=lambda old, new: team.record_sched(old, new, mid))
+                    stamp=lambda old, new: schedule.stamp(old, new, mid))
 
     # ------------------------------------------------------------ 스페이스 공통 (개인·팀)
-    def _space(self, method, path, qs, store, hub, writable, after_sched=None):
+    def _space(self, method, path, qs, store, hub, writable, stamp=None):
         if method == "POST":
             if not writable:
                 return self._send_json({"error": "read_only"}, 403)
@@ -487,15 +487,12 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/note":
                     note = store.write(dt.date.fromisoformat(body["date"]), content, body.get("base_mtime"))
                 elif path == "/sched-doc":
-                    old = None
-                    if after_sched:
+                    if stamp:   # 팀스페이스: 새로 쓰거나 고친 줄 끝에 작성자 꼬리표
                         try:
-                            old = store.sched_doc().get("content", "")
+                            content = stamp(store.sched_doc().get("content", ""), content)
                         except OSError:
-                            after_sched = None   # 이전 내용을 못 읽으면 작성자 기록만 건너뜀 (저장은 진행)
+                            pass   # 이전 내용을 못 읽으면 꼬리표만 건너뜀 (저장은 진행)
                     note = store.write_sched_doc(content, body.get("base_mtime"))
-                    if note is not None and after_sched:
-                        after_sched(old, content)
                 else:
                     return self._send_json({"error": "not found"}, 404)
             except OSError as e:
