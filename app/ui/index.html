@@ -5,30 +5,13 @@
   <title>dogani Overlay</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body class="theme-light mode-nav">
+<body class="theme-light">
   <div id="root">
-    <!-- 네비게이션 바 (하나뿐): 스페이스 이름 ▾ · 할일 날짜 이동 · 할일/달력 버튼 -->
-    <nav id="nav" title="드래그해서 이동">
-      <button id="space-btn" class="space-btn" title="스페이스 고르기 (팀 / 내)">
-        <span id="status-dot" class="dot"></span>
-        <span id="space-name"></span>
-        <svg class="caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
-      </button>
-      <button id="btn-note" class="nav-btn" title="할일">
-        <svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
-      </button>
-      <button id="btn-cal" class="nav-btn" title="달력">
-        <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg>
-      </button>
-    </nav>
-
-    <!-- 스페이스 메뉴 (팀스페이스 / 개인 스페이스) -->
-    <div id="space-menu" class="space-menu" hidden></div>
-
-    <section id="panel" hidden>
+    <section id="panel">
       <!-- 할일 창 -->
       <div id="view-note" class="view" hidden>
         <div class="panel-bar" title="드래그해서 이동">
+          <span class="bar-space" title="보고 있는 스페이스 (트레이에서 바꿈)"><span class="dot"></span><span class="bar-space-name"></span></span>
           <button class="icon-btn" id="note-prev" title="이전 근무일">&#x2039;</button>
           <div class="header-title" id="note-title"></div>
           <button class="icon-btn" id="note-next" title="다음 근무일">&#x203A;</button>
@@ -47,6 +30,7 @@
       <!-- 달력 창 -->
       <div id="view-cal" class="view" hidden>
         <div class="panel-bar" title="드래그해서 이동">
+          <span class="bar-space" title="보고 있는 스페이스 (트레이에서 바꿈)"><span class="dot"></span><span class="bar-space-name"></span></span>
           <button class="icon-btn" id="cal-prev" title="이전 달">&#x2039;</button>
           <div class="header-title" id="cal-title"></div>
           <button class="icon-btn" id="cal-next" title="다음 달">&#x203A;</button>

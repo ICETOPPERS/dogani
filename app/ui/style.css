@@ -1,7 +1,6 @@
 /* ------------------------------------------------------------ theme */
 .theme-light {
   --bg: rgba(255, 255, 255, 0.90);
-  --bg-nav: rgba(255, 255, 255, 0.82);
   --bg-hover: rgba(0, 0, 0, 0.06);
   --border: rgba(0, 0, 0, 0.12);
   --text: #222;
@@ -23,7 +22,6 @@
 }
 .theme-dark {
   --bg: rgba(32, 32, 32, 0.88);
-  --bg-nav: rgba(32, 32, 32, 0.80);
   --bg-hover: rgba(255, 255, 255, 0.08);
   --border: rgba(255, 255, 255, 0.12);
   --text: #dadada;
@@ -59,29 +57,13 @@ html, body {
 #root {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   height: 100%;
   /* 그림자(0 2px 7px)가 창 밖으로 잘리지 않도록 여백 > 오프셋 + 블러 */
   padding: 10px 10px 12px;
   gap: 8px;
 }
-body.expanded #root { align-items: stretch; }
-body.expanded #nav { display: flex; align-self: stretch; }
 
-/* ------------------------------------------------------------ nav */
-#nav {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 6px 12px;
-  border-radius: 20px;
-  background: var(--bg-nav);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  cursor: move;
-  flex: none;
-  align-self: flex-start;
-}
 .dot {
   width: 9px;
   height: 9px;
@@ -96,40 +78,6 @@ body.expanded #nav { display: flex; align-self: stretch; }
   0% { transform: scale(1.8); }
   100% { transform: scale(1); }
 }
-#server-label {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  margin-right: 4px;
-  white-space: nowrap;
-}
-.nav-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  padding: 0;
-}
-.nav-btn:hover { background: var(--bg-hover); }
-/* 네비게이션 바: 할일/달력 버튼만, 할일/달력 창: 닫기 버튼만 */
-#btn-close { display: none; }
-body.panel-window #btn-note, body.panel-window #btn-cal { display: none; }
-body.panel-window #btn-close { display: grid; }
-.nav-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.nav-btn svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 /* ------------------------------------------------------------ panel */
 #panel {
   position: relative;
@@ -597,75 +545,21 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .copy-prev:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .copy-prev span { color: var(--text-muted); font-size: 12px; }
 
-/* ------------------------------------------------------------ v26.11.09 네비게이션 바 하나 + 공간 메뉴 (공용 / 개인) */
-body:not(.mode-nav) #nav, body:not(.mode-nav) #space-menu { display: none !important; }
-body.mode-nav #root { gap: 4px; }
-#nav { padding: 4px 6px 4px 4px; gap: 6px; }
-.space-btn {
+/* 위쪽 막대 왼쪽: 보고 있는 스페이스 이름 + 연결 점 (고르기는 트레이) */
+.bar-space {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 8px 0 4px;
-  border: none;
-  border-radius: 16px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  max-width: 180px;
-}
-.space-btn:hover, .space-btn.active { background: var(--bg-hover); }
-.space-btn #space-name { overflow: hidden; text-overflow: ellipsis; }
-.space-btn .dot { margin-left: 4px; }
-.space-btn .caret { width: 12px; height: 12px; fill: none; stroke: var(--text-muted); stroke-width: 2.5; flex: none; }
-
-.space-menu {
-  width: 250px;
-  max-height: 420px;
-  overflow-y: auto;
-  padding: 6px;
-  border-radius: 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  flex: none;
-}
-.space-menu[hidden] { display: none; }
-.sm-title {
-  padding: 8px 8px 3px;
-  font-size: 11px;
+  gap: 5px;
+  max-width: 34%;
+  padding: 0 6px 0 4px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
+  white-space: nowrap;
+  flex: none;
 }
-.sm-title:first-child { padding-top: 2px; }
-.sm-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 30px;
-  padding: 3px 8px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-.sm-item:hover:not(:disabled) { background: var(--bg-hover); }
-.sm-item.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.sm-item:disabled { opacity: .45; cursor: default; }
-.sm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sm-name em { font-style: normal; font-size: 11px; color: var(--text-muted); margin-left: 2px; }
-.sm-sub { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
-.sm-action .sm-name { color: var(--text-muted); }
-.sm-glyph { width: 20px; text-align: center; color: var(--text-muted); flex: none; }
-.sm-sep { height: 1px; margin: 6px 4px; background: var(--border); }
+.bar-space-name { overflow: hidden; text-overflow: ellipsis; }
+body.space-team .bar-space-name { color: var(--text); }
 
 /* 할일·달력 창: 이름 없이 위쪽 막대 하나 (드래그 이동 + 진행 막대 / 달 이동 + 닫기) */
 .panel-bar {

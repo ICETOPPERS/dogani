@@ -1,6 +1,5 @@
 /*
- * 오버레이 UI 로직. 같은 페이지를 세 가지 창으로 쓴다 (state.mode)
- * - nav : 네비게이션 바 (하나뿐). 스페이스 이름 ▾ 를 누르면 스페이스 메뉴(팀 / 내), 할일 날짜 이동, 할일·달력 버튼
+ * 오버레이 UI 로직. 같은 페이지를 두 가지 창으로 쓴다 (state.mode). 창 열고 닫기·스페이스 고르기는 트레이 메뉴
  * - note: 할일 창. 고른 스페이스의 그날 노트 (CodeMirror 라이브 프리뷰, 쓰기 권한 있을 때만 편집)
  * - cal : 달력 창. 고른 스페이스의 월 달력 + 일정 파일 편집 (일정은 위에서 체크한 스페이스들을 합쳐 표시)
  * 창 이동/크기/창끼리 연락은 QWebChannel 의 bridge 객체로 파이썬에 요청
@@ -20,9 +19,9 @@
   };
 
   const state = {
-    mode: "nav",       // nav | note | cal
+    mode: "",          // note | cal
     space: null,       // { key, name, server, prefix, kind: me|team, status }
-    spaces: [],        // nav: 메뉴 목록
+    spaces: [],        // 달력에 같이 그릴 수 있는 스페이스 전부
     base: "",          // "http://ip:port/api" 또는 ".../api/team"
     today: iso(new Date()),
     noteDate: iso(new Date()),
@@ -71,6 +70,7 @@
   function setStatus(status) {
     if (state.status === status) return;
     state.status = status;
+    renderSpaceLabel();
     if (bridge && state.space) bridge.setStatus(state.space.key, status);
   }
 
@@ -154,7 +154,6 @@
 
   /** 지금 보는 스페이스 말고 보이는 스페이스들 (지금 스페이스는 SSE 로 바로 받음, 나머지는 1분마다) */
   function loadOtherSchedules() {
-    if (state.mode === "nav") return;
     for (const sp of shownSpaces()) if (!state.space || sp.key !== state.space.key) loadSchedule(sp);
   }
 
@@ -490,75 +489,17 @@
     else loadMonth();
   }
 
-  // ------------------------------------------------------------ nav (네비게이션 바 + 스페이스 메뉴)
-  const GROUPS = [["team", "팀스페이스"], ["me", "개인"]];
-
-  function renderNav(cfg) {
+  // ------------------------------------------------------------ 위쪽 막대의 스페이스 이름 (고르기는 트레이 메뉴)
+  function renderSpaceLabel() {
     const sp = state.space;
     if (!sp) return;
-    const dot = $("status-dot");
-    for (const s of ["online", "blocked"]) dot.classList.toggle(s, sp.status === s);
-    $("space-name").textContent = sp.name;
-    $("nav").title = `${sp.kind === "team" ? "팀스페이스" : "개인"} · 드래그해서 이동`;
-    renderMenu(cfg);
-    reportNavSize();
-  }
-
-  function renderMenu(cfg) {
-    const cur = state.space && state.space.key;
-    let html = "";
-    for (const [group, title] of GROUPS) {
-      const items = state.spaces.filter((s) => s.group === group);
-      if (group === "team" && !items.length) {
-        html += `<div class="sm-title">팀스페이스</div>`;
-        html += `<button class="sm-item sm-action" data-action="join_team"><span class="sm-glyph">+</span><span class="sm-name">팀 참여하기...</span></button>`;
-        if ((cfg || {}).teamState === "none") {
-          html += `<button class="sm-item sm-action" data-action="start_host"><span class="sm-glyph">⌂</span><span class="sm-name">새 팀 만들기 (이 PC 가 호스트)...</span></button>`;
-        }
-        continue;
-      }
-      if (!items.length) continue;
-      if (title) html += `<div class="sm-title">${title}</div>`;
-      for (const s of items) {
-        html += `<button class="sm-item${s.key === cur ? " active" : ""}" data-key="${esc(s.key)}"${s.disabled ? " disabled" : ""}>` +
-          `<span class="sm-name">${esc(s.name)}</span>` +
-          (s.sub ? `<span class="sm-sub">${esc(s.sub)}</span>` : "") +
-          `<span class="dot ${esc(s.status)}"></span></button>`;
-      }
+    for (const el of document.querySelectorAll(".bar-space")) {
+      el.querySelector(".bar-space-name").textContent = sp.name;
+      const dot = el.querySelector(".dot");
+      for (const s of ["online", "blocked"]) dot.classList.toggle(s, state.status === s);
+      el.title = `${sp.kind === "team" ? "팀스페이스" : "개인 스페이스"}: ${sp.name}${state.status === "blocked" ? " (로그인 풀림)" : state.status === "online" ? "" : " (연결 안 됨)"}
+바꾸기: 트레이 메뉴`;
     }
-    html += `<div class="sm-sep"></div>`;
-    html += `<button class="sm-item sm-action" data-action="rename"><span class="sm-glyph">✎</span><span class="sm-name">내 이름 바꾸기</span></button>`;
-    html += `<button class="sm-item sm-action" data-action="browse_dir"><span class="sm-glyph">+</span><span class="sm-name">스페이스 열기...</span></button>`;
-    $("space-menu").innerHTML = html;
-  }
-
-  function setMenu(open) {
-    $("space-menu").hidden = !open;
-    $("space-btn").classList.toggle("active", open);
-    reportNavSize();
-  }
-
-  function setOpen(open) {
-    $("btn-note").classList.toggle("active", !!open.note);
-    $("btn-cal").classList.toggle("active", !!open.cal);
-  }
-
-  function reportNavSize() {
-    if (state.mode !== "nav") return;
-    requestAnimationFrame(() => {
-      // 그림자가 잘리지 않도록 #root 여백까지 포함한 크기
-      const cs = getComputedStyle($("root"));
-      const nav = $("nav").getBoundingClientRect();
-      let w = nav.width, h = nav.height;
-      if (!$("space-menu").hidden) {
-        const m = $("space-menu").getBoundingClientRect();
-        w = Math.max(w, m.width);
-        h = m.bottom - nav.top;
-      }
-      w += parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-      h += parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-      if (bridge) bridge.setNavSize(Math.ceil(w), Math.ceil(h));
-    });
   }
 
   // ------------------------------------------------------------ edit permission
@@ -584,23 +525,10 @@
   }
 
   // ------------------------------------------------------------ events
-  $("space-btn").addEventListener("click", () => setMenu($("space-menu").hidden));
-  $("space-menu").addEventListener("click", (e) => {
-    const item = e.target.closest(".sm-item");
-    if (!item || item.disabled) return;
-    setMenu(false);
-    if (item.dataset.action) { if (bridge) bridge.action(item.dataset.action); return; }
-    if (bridge) bridge.selectSpace(item.dataset.key);
-  });
-  window.addEventListener("blur", () => { if (state.mode === "nav" && !$("space-menu").hidden) setMenu(false); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("space-menu").hidden) setMenu(false); });
-
-  $("btn-note").addEventListener("click", () => { setMenu(false); if (bridge) bridge.togglePanel("note"); });
-  $("btn-cal").addEventListener("click", () => { setMenu(false); if (bridge) bridge.togglePanel("cal"); });
-  // 화살표는 토/일·쉬는 날을 건너뜀 (그 날 노트는 달력에서 눌러서 열기). 할일 창에 전달
-  $("note-prev").addEventListener("click", () => bridge && bridge.stepNote(-1));
-  $("note-next").addEventListener("click", () => bridge && bridge.stepNote(1));
-  $("note-today").addEventListener("click", () => bridge && bridge.stepNote(0));
+  // 화살표는 토/일·쉬는 날을 건너뜀 (그 날 노트는 달력에서 눌러서 열기)
+  $("note-prev").addEventListener("click", () => App.step(-1));
+  $("note-next").addEventListener("click", () => App.step(1));
+  $("note-today").addEventListener("click", () => App.step(0));
 
   for (const btn of document.querySelectorAll(".close-btn")) {
     btn.addEventListener("click", () => {
@@ -1018,8 +946,8 @@
   $("ev-add").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); evAdd.close(); } });
   document.addEventListener("mousedown", (e) => { if (!$("ev-add").hidden && !e.target.closest("#ev-add")) evAdd.close(); });
 
-  // 드래그 이동: 네비게이션 바, 창 위쪽 막대
-  for (const el of [$("nav"), ...document.querySelectorAll(".panel-bar")]) {
+  // 드래그 이동: 창 위쪽 막대
+  for (const el of document.querySelectorAll(".panel-bar")) {
     el.addEventListener("mousedown", (e) => {
       if (e.button !== 0 || e.target.closest("button")) return;
       e.preventDefault();
@@ -1054,7 +982,7 @@
   window.App = {
     /**
      * 파이썬에서 호출 (바뀐 값만 와도 됨)
-     * { mode, theme, space, spaces, calHidden, date, noteDate,  nav: open, noteLabel, me, teamState }
+     * { mode, theme, space, spaces, calHidden, date, noteDate }
      */
     configure(cfg) {
       if (cfg.theme) {
@@ -1065,14 +993,10 @@
       if (cfg.mode && cfg.mode !== state.mode) {
         state.mode = cfg.mode;
         first = true;
-        for (const m of ["nav", "note", "cal"]) document.body.classList.toggle("mode-" + m, m === cfg.mode);
-        const panel = cfg.mode !== "nav";
-        $("panel").hidden = !panel;
+        for (const m of ["note", "cal"]) document.body.classList.toggle("mode-" + m, m === cfg.mode);
         $("view-note").hidden = cfg.mode !== "note";
         $("view-cal").hidden = cfg.mode !== "cal";
         $("view-doc").hidden = true;
-        document.body.classList.toggle("expanded", panel);
-        if (bridge) bridge.setExpanded(panel);
       }
       if (cfg.spaces) state.spaces = cfg.spaces;
       if (cfg.calHidden) state.calHidden = new Set(cfg.calHidden);
@@ -1082,13 +1006,9 @@
         if (moved) { note.exit(); doc.exit(); }
         state.space = cfg.space;
         document.body.classList.toggle("space-team", cfg.space.kind === "team");
+        renderSpaceLabel();
       }
 
-      if (state.mode === "nav") {
-        if (cfg.open) setOpen(cfg.open);
-        renderNav(cfg);
-        return;
-      }
       if (moved) {
         state.writable = false;
         document.body.classList.remove("writable");
@@ -1113,7 +1033,7 @@
     showDate(date) {
       if (state.mode === "note") showNote(date);
     },
-    /** 네비게이션 바의 ‹ › 오늘 (step: -1 / 1 / 0) */
+    /** 할일 창의 ‹ › 오늘 (step: -1 / 1 / 0) */
     step(step) {
       if (state.mode !== "note") return;
       showNote(step === 0 ? state.today : CAL.nextWorkday(state.noteDate, step, state.sched));

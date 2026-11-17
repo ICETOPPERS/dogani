@@ -64,10 +64,9 @@ DEFAULT_CONFIG = {
     "team": dict(EMPTY_TEAM),
     "team_host": False,   # 이 PC 가 팀 호스트
     "team_space_dir": "",     # 팀 호스트일 때 팀스페이스 폴더
-    "visible": True,
     "space": ME,          # 지금 보고 있는 스페이스 (me | team)
     "cal_hidden": [],     # 달력·할일 일정에서 숨긴 스페이스 키·"#태그" ("#" = 태그 없는 일정)
-    "windows": {},        # nav / note / cal -> {"pos", "panel", "open"}
+    "windows": {},        # note / cal -> {"pos", "panel", "open"}
     "on_top": False,      # False: 바탕화면에 고정 (Win+D 에도 남아 있음)
     "opacity": 100,
     "theme": "light",
@@ -84,6 +83,11 @@ def load_config():
     cfg["team"] = {**EMPTY_TEAM, **(cfg.get("team") or {})}
     cfg["team"].pop("secret", None)   # 예전 HMAC 비밀키 (위조에 쓰일 수 있어 폐기)
     migrate_windows(cfg)
+    # v26.11.17 이전: 네비게이션 바 + "dogani 표시"(전체 숨김) → 트레이에서 할일·달력 창을 하나씩 켬
+    cfg["windows"].pop("nav", None)
+    if cfg.pop("visible", True) is False:
+        for w in cfg["windows"].values():
+            w["open"] = False
     # v26.11.17 이전: 볼트(vault) → 스페이스
     for old, new in LEGACY_KEYS:
         # 새 exe 는 두 키를 같게 저장 → 다르면 예전 exe 가 고친 것이므로 예전 키가 최신
@@ -111,12 +115,12 @@ def load_config():
 
 
 def migrate_windows(cfg):
-    """v26.11.06 이전: 사람마다 네비게이션 바(overlays) → 이제 바 하나(windows)"""
+    """v26.11.06 이전: 사람마다 네비게이션 바(overlays) → windows (네비게이션 바 위치는 버림)"""
     old = cfg.pop("overlays", None)
     if cfg["windows"] or not old:
         return
     me = old.get(ME) or {}
-    cfg["windows"] = {"nav": {"pos": me.get("pos")}}
+    cfg["windows"] = {}
     for mode in ("note", "cal"):
         if isinstance(me.get(mode), dict):
             cfg["windows"][mode] = {k: me[mode].get(k) for k in ("pos", "panel", "open")}
@@ -127,15 +131,12 @@ def migrate_old_config():
     cfg = {}
     old_server = space.read_json(os.path.join(CONFIG_DIR, "server.json")) or {}
     old_client = space.read_json(os.path.join(CONFIG_DIR, "client.json")) or {}
-    old_owner = space.read_json(os.path.join(CONFIG_DIR, "owner.json")) or {}
     for k in ("port", "todo_dir", "paused", "blocked"):
         if k in old_server:
             cfg[k] = old_server[k]
     for k in ("on_top", "opacity", "theme"):
         if k in old_client:
             cfg[k] = old_client[k]
-    if old_owner.get("pos"):
-        cfg["windows"] = {"nav": {"pos": old_owner["pos"]}}
     if old_client.get("server"):
         cfg["servers"] = [old_client["server"]]
     return cfg
@@ -430,6 +431,17 @@ class Tray(QObject):
             Item("이 PC 를 팀 호스트로 (팀스페이스 폴더 고르기)...", self.emit("start_host"), enabled=bool(app.share)),
         )
 
+    def view_items(self):
+        """보고 있는 스페이스 고르기 (팀에 있을 때만: 개인 하나뿐이면 고를 게 없음)"""
+        Item = pystray.MenuItem
+        spaces = self.app.spaces()
+        if len(spaces) < 2:
+            return []
+        cur = self.app.current_space()["key"]
+        label = {TEAM: "팀스페이스 보기", ME: "개인 스페이스 보기"}
+        return [Item(f"{label.get(s['key'], '보기')}: {s['name']}", self.emit("select_space", s["key"]),
+                     checked=lambda i, k=s["key"], c=cur: k == c, radio=True) for s in spaces] + [pystray.Menu.SEPARATOR]
+
     def build_menu(self):
         Item = pystray.MenuItem
         app, cfg = self.app, self.app.cfg
@@ -442,7 +454,10 @@ class Tray(QObject):
         else:
             team_label = "팀스페이스: 참여 안 함"
         return [
-            Item("dogani 표시", self.emit("toggle_visible"), checked=lambda i: cfg["visible"], default=True),
+            Item("할일 표시", self.emit("toggle_panel", "note"), checked=lambda i: "note" in app.panels, default=True),
+            Item("달력 표시", self.emit("toggle_panel", "cal"), checked=lambda i: "cal" in app.panels),
+            pystray.Menu.SEPARATOR,
+            *self.view_items(),
             Item(f"내 이름: {cfg['name']}", pystray.Menu(Item("이름 바꾸기...", self.emit("rename")))),
             Item(team_label, self.team_menu()),
             pystray.Menu.SEPARATOR,
@@ -545,23 +560,10 @@ class Bridge(QObject):
     def startResize(self):
         self.win.start_resize()
 
-    @Slot(int, int)
-    def setNavSize(self, w, h):
-        self.win.set_nav_size(w, h)
-
-    @Slot(bool)
-    def setExpanded(self, expanded):
-        self.win.set_expanded(expanded)
-
     @Slot(str, str)
     def setStatus(self, key, status):
         if status in ("online", "offline", "blocked"):
             self.win.app.on_status(key, status)
-
-    @Slot(str)
-    def togglePanel(self, mode):
-        if mode in ("note", "cal"):
-            self.win.app.toggle_panel(mode)
 
     @Slot()
     def closePanel(self):
@@ -575,14 +577,6 @@ class Bridge(QObject):
     def noteDateChanged(self, date, title, is_today):
         self.win.app.note_date_changed(date, title, is_today)
 
-    @Slot(int)
-    def stepNote(self, step):
-        self.win.app.step_note(step)
-
-    @Slot(str)
-    def selectSpace(self, key):
-        self.win.app.select_space(key)
-
     @Slot(str)
     def setCalHidden(self, keys_json):
         try:
@@ -591,11 +585,6 @@ class Bridge(QObject):
             return
         if isinstance(keys, list):
             self.win.app.set_cal_hidden(keys)
-
-    @Slot(str)
-    def action(self, name):
-        if name in ("join_team", "rename", "browse_dir", "start_host"):
-            self.win.app.on_command(name, None)
 
     @Slot(str)
     def openUrl(self, url):
@@ -717,16 +706,14 @@ VK_LBUTTON = 0x01
 
 
 class Overlay(QWidget):
-    """바탕화면 창. mode = nav(네비게이션 바, 하나뿐) | note(할일 창) | cal(달력 창)"""
+    """바탕화면 창. mode = note(할일 창) | cal(달력 창). 열고 닫기는 트레이 메뉴"""
 
     def __init__(self, app, mode):
         super().__init__()
         self.app = app
         self.mode = mode
-        self.expanded = False
-        self.nav_size = QSize(200, 60)
 
-        self.setWindowTitle(APP_NAME + {"note": " 할일", "cal": " 달력"}.get(mode, ""))
+        self.setWindowTitle(APP_NAME + {"note": " 할일", "cal": " 달력"}[mode])
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.apply_flags()
 
@@ -746,7 +733,10 @@ class Overlay(QWidget):
         layout.addWidget(self.view)
 
         self.setWindowOpacity(app.cfg["opacity"] / 100)
-        self.resize(self.nav_size)
+        w, h = self.wcfg.get("panel") or PANEL_DEFAULT_SIZE[mode]
+        mw, mh = PANEL_MIN_SIZE[mode]
+        self.setMinimumSize(mw, mh)
+        self.resize(max(w, mw), max(h, mh))
         self.restore_position()
         # 탐색기 재시작 등으로 바탕화면 창이 바뀌면 다시 고정
         self.pin_timer = QTimer(self, interval=5000, timeout=self.apply_pin)
@@ -761,9 +751,7 @@ class Overlay(QWidget):
     def js_config(self):
         cfg = self.app.js_common()
         cfg["mode"] = self.mode
-        if self.mode == "nav":
-            cfg.update(self.app.js_nav())
-        elif self.mode == "note":
+        if self.mode == "note":
             cfg["date"] = self.wcfg.pop("date", None)
         return cfg
 
@@ -819,36 +807,15 @@ class Overlay(QWidget):
         if pos and QGuiApplication.screenAt(QPoint(pos[0] + 30, pos[1] + 20)):
             self.move(pos[0], pos[1])
             return
-        nav = self.app.nav
-        if self.mode != "nav" and nav:
-            # 처음 여는 창은 네비게이션 바 바로 아래: 할일 창은 그대로, 달력 창은 할일 창 자리 왼쪽
-            w = (self.wcfg.get("panel") or PANEL_DEFAULT_SIZE[self.mode])[0]
-            x = nav.x() - (w - 10 if self.mode == "cal" else 0)
-            self.move(x, nav.y() + nav.nav_size.height() - 10)
-            self.keep_on_screen(nav.pos())
-            return
+        # 처음 여는 창: 주 모니터 오른쪽 위. 할일 창은 맨 오른쪽, 달력 창은 그 왼쪽
         geo = QGuiApplication.primaryScreen().availableGeometry()
-        self.move(geo.right() - 420, geo.top() + 20)
+        x = geo.right() - PANEL_DEFAULT_SIZE["note"][0] - 20
+        if self.mode == "cal":
+            x -= self.width() - 10
+        self.move(max(geo.left(), x), geo.top() + 20)
+        self.keep_on_screen(self.pos())
 
     # -- size
-    def set_nav_size(self, w, h):
-        self.nav_size = QSize(w, h)
-        if not self.expanded:
-            self.setMinimumSize(0, 0)
-            self.resize(self.nav_size)
-
-    def set_expanded(self, expanded):
-        self.expanded = expanded
-        if expanded:
-            w, h = self.wcfg.get("panel") or PANEL_DEFAULT_SIZE.get(self.mode, (440, 640))
-            mw, mh = PANEL_MIN_SIZE.get(self.mode, (300, 240))
-            self.setMinimumSize(mw, mh)
-            self.resize(max(w, mw), max(h, mh))
-            self.keep_on_screen()
-        else:
-            self.setMinimumSize(0, 0)
-            self.resize(self.nav_size)
-
     def start_resize(self):
         """오른쪽 아래 손잡이로 크기 조절 시작 (외곽선만 따라다님)"""
         if getattr(self, "_ghost", None) is None:
@@ -889,9 +856,8 @@ class Overlay(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.expanded:
-            self.wcfg["panel"] = [self.width(), self.height()]
-            self.app.save_later()
+        self.wcfg["panel"] = [self.width(), self.height()]
+        self.app.save_later()
 
     def moveEvent(self, event):
         super().moveEvent(event)
@@ -939,9 +905,7 @@ class doganiApp(QObject):
         self.qapp = qapp
         self.cfg = cfg
         self.status = {}     # 스페이스 키 -> 창에서 알려 준 연결 상태
-        self.nav = None      # 네비게이션 바 (하나)
-        self.panels = {}     # "note" | "cal" -> Overlay
-        self.note_label = None   # 할일 창이 보여주는 날짜 {date, title, today}
+        self.panels = {}     # "note" | "cal" -> Overlay (트레이에서 켜고 끔)
         self.team_status = "offline"
         self.team_polling = False
         self.save_timer = QTimer(self, singleShot=True, interval=800, timeout=lambda: save_config(self.cfg))
@@ -986,7 +950,7 @@ class doganiApp(QObject):
         return self.cfg["windows"].setdefault(mode, {"pos": None, "panel": None, "open": False})
 
     def windows(self):
-        return ([self.nav] if self.nav else []) + list(self.panels.values())
+        return list(self.panels.values())
 
     def in_team(self):
         return bool(self.cfg["team"].get("token"))
@@ -1018,17 +982,10 @@ class doganiApp(QObject):
         return {"theme": self.cfg["theme"], "space": self.current_space(), "spaces": self.spaces(),
                 "calHidden": self.cfg["cal_hidden"]}
 
-    def js_nav(self):
-        return {"spaces": self.spaces(), "open": self.open_panels(), "noteLabel": self.note_label,
-                "me": self.cfg["name"], "teamState": "host" if self.share and self.share.team else
-                ("joined" if self.in_team() else "none")}
-
     def push_spaces(self):
         common = self.js_common()
         for win in self.panels.values():
             win.push_config(**common)
-        if self.nav:
-            self.nav.push_config(**common, **self.js_nav())
 
     def select_space(self, key):
         if key == self.cfg["space"]:
@@ -1344,9 +1301,6 @@ class doganiApp(QObject):
         done(result)
 
     # ------------------------------------------------------------ windows
-    def open_panels(self):
-        return {m: m in self.panels for m in ("note", "cal")}
-
     def show_panel(self, mode):
         self.win_cfg(mode)["open"] = True
         win = self.panels.get(mode)
@@ -1355,7 +1309,6 @@ class doganiApp(QObject):
             self.panels[mode] = win
         win.show()
         win.raise_()
-        self.push_open()
         self.save_later()
         return win
 
@@ -1366,9 +1319,6 @@ class doganiApp(QObject):
         if win:
             win.close()
             win.deleteLater()
-        if mode == "note":
-            self.note_label = None
-        self.push_open()
         self.save_later()
 
     def toggle_panel(self, mode):
@@ -1376,10 +1326,6 @@ class doganiApp(QObject):
             self.close_panel(mode)
         else:
             self.show_panel(mode)
-
-    def push_open(self):
-        if self.nav:
-            self.nav.push_config(open=self.open_panels(), noteLabel=self.note_label)
 
     def open_note(self, date):
         """달력에서 날짜 클릭 → 할일 창을 열고(이미 열려 있으면 그대로) 그 날짜로"""
@@ -1393,38 +1339,17 @@ class doganiApp(QObject):
             self.show_panel("note")
 
     def note_date_changed(self, date, title, is_today):
-        self.note_label = {"date": date, "title": title, "today": is_today}
-        if self.nav:
-            self.nav.push_config(noteLabel=self.note_label)
         cal = self.panels.get("cal")
         if cal:
             cal.push_config(noteDate=date)
 
-    def step_note(self, step):
-        win = self.panels.get("note")
-        if win:
-            win.call("step", step)
-
-    def set_visible(self, visible):
-        self.cfg["visible"] = visible
-        if visible:
-            if not self.nav:
-                self.nav = Overlay(self, "nav")
-            self.nav.show()
-            for mode in ("note", "cal"):
-                if self.win_cfg(mode).get("open"):
-                    self.show_panel(mode)
-        else:
-            if self.nav:
-                self.nav.hide()
-            for mode in ("note", "cal"):
-                self.close_panel(mode, forget=False)  # 다시 표시하면 열려 있던 창도 다시 연다
-
     def start(self):
         self.tray.update()
         self.tray.start()
-        if self.cfg["visible"]:
-            self.set_visible(True)
+        fresh = not any(m in self.cfg["windows"] for m in ("note", "cal"))   # 처음 실행: 할일 창 하나 열어 둠
+        for mode in ("note", "cal"):
+            if self.win_cfg(mode).get("open") or (fresh and mode == "note"):
+                self.show_panel(mode)
         self.team_timer.start()
         self.poll_team()
         if not self.share:
@@ -1452,7 +1377,7 @@ class doganiApp(QObject):
         team_root = self.share.team.root if self.share and self.share.team else ""
         if team_root and overlaps(path, team_root):
             QMessageBox.warning(None, APP_NAME, "팀스페이스와 겹치는 폴더는 개인 스페이스로 열 수 없습니다.\n"
-                                "(팀스페이스는 바의 스페이스 메뉴에서 고르세요)")
+                                "(팀스페이스는 트레이에서 팀스페이스 보기를 고르세요)")
             return
         if not os.path.isdir(path):
             if QMessageBox.question(None, APP_NAME, f"폴더가 없습니다.\n{path}\n\n최근 목록에서 뺄까요?"
@@ -1475,11 +1400,9 @@ class doganiApp(QObject):
         cfg = self.cfg
         share = self.share
         team = share.team if share else None
-        if name == "toggle_visible":
-            self.set_visible(not cfg["visible"])
+        if name == "toggle_panel":
+            self.toggle_panel(arg)
         elif name == "select_space":
-            if not cfg["visible"]:
-                self.set_visible(True)
             self.select_space(arg)
         elif name == "rename":
             self.rename()
