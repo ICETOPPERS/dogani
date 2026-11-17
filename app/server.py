@@ -3,7 +3,7 @@
 
 - 스페이스 폴더(데일리 노트 YYMMDD 요일.md + 일정 파일)를 감시하다가 변경되면 SSE 로 창에 푸시
 - 개인 스페이스 /api/* : 같은 PC(나)에서 온 요청만 (남에게 공유하지 않음)
-- 팀스페이스 /api/team/* : 이 PC 가 팀 호스트일 때 팀원(토큰)에게 공개, 팀원 모두 편집
+- 팀스페이스 /api/team/* : 이 PC 가 팀 호스트일 때 팀원(토큰)에게 공개, 쓰기는 perm=write 팀원만 (team.can_write)
 """
 import datetime as dt
 import json
@@ -458,15 +458,19 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             name = team.update_profile(mid, body.get("name"))
             return self._send_json({"name": name})
+        writable = team.can_write(mid)
         if path == "/info":
             return self._send_json({"app": "dogani", "name": team.name, "kind": "team", "paused": False,
-                                    "writable": True, "today": dt.date.today().isoformat()})
+                                    "writable": writable, "today": dt.date.today().isoformat()})
         if path == "/events":
             return self._stream(team.hub, ctx)
-        self._space(method, path, qs, team.store, team.hub, writable=True)
+        if path == "/schedule" and method == "GET":
+            return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable})
+        self._space(method, path, qs, team.store, team.hub, writable=writable,
+                    after_sched=lambda old, new: team.record_sched(old, new, mid))
 
     # ------------------------------------------------------------ 스페이스 공통 (개인·팀)
-    def _space(self, method, path, qs, store, hub, writable):
+    def _space(self, method, path, qs, store, hub, writable, after_sched=None):
         if method == "POST":
             if not writable:
                 return self._send_json({"error": "read_only"}, 403)
@@ -478,7 +482,15 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/note":
                     note = store.write(dt.date.fromisoformat(body["date"]), content, body.get("base_mtime"))
                 elif path == "/sched-doc":
+                    old = None
+                    if after_sched:
+                        try:
+                            old = store.sched_doc().get("content", "")
+                        except OSError:
+                            after_sched = None   # 이전 내용을 못 읽으면 작성자 기록만 건너뜀 (저장은 진행)
                     note = store.write_sched_doc(content, body.get("base_mtime"))
+                    if note is not None and after_sched:
+                        after_sched(old, content)
                 else:
                     return self._send_json({"error": "not found"}, 404)
             except OSError as e:

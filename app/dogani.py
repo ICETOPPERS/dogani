@@ -354,7 +354,9 @@ class Tray(QObject):
                 items.append(Item(f"{m['name']}  - 관리자(이 PC)", None, enabled=False))
                 continue
             state = "접속 중" if m["online"] else "꺼짐"
-            items.append(Item(f"{m['name']}  - {state}", pystray.Menu(
+            ro = m["perm"] == "read"
+            items.append(Item(f"{m['name']}  - {state}{', 읽기만' if ro else ''}", pystray.Menu(
+                Item("편집 허용", self.emit("perm", (m["id"], "write" if ro else "read")), checked=lambda _, ro=ro: not ro),
                 Item("다시 초대 (PC 바꿈, 초대장 복사)", self.emit("reinvite", m["id"])),
                 Item("팀에서 내보내기", self.emit("kick", m["id"])),
             )))
@@ -1397,6 +1399,12 @@ class doganiApp(QObject):
             if m and QMessageBox.question(None, APP_NAME, f"{m['name']} 님을 팀에서 내보낼까요?") == QMessageBox.StandardButton.Yes:
                 team.kick(arg)
                 self.poll_team()
+        elif name == "perm" and team:
+            try:
+                team.set_perm(*arg)
+            except TeamError as e:
+                return self.tray.notify(e.message)
+            self.poll_team()
         elif name == "copy_address" and share:
             QGuiApplication.clipboard().setText(share.address)
         elif name == "open_dir":

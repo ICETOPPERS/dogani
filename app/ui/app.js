@@ -34,6 +34,7 @@
     writable: false,
     calHidden: new Set(), // 달력·할일 일정에서 숨긴 스페이스 키 (설정 cal_hidden, 창끼리 같이 씀)
     evBySpace: {},     // 스페이스 키 → /schedule 일정 목록
+    roSpaces: new Set(), // 읽기만 허용된 스페이스 키 (팀 관리자가 편집 허용을 끔. /schedule 의 writable)
     sched: null,       // 일정 색인 (CAL.index)
   };
   let bridge = null;
@@ -141,7 +142,7 @@
   }
   const shownSpaces = () => schedSpaces().filter((s) => !state.calHidden.has(s.key));
   /** 일정을 고칠 수 있음 = 쓰기 권한 + 그 일정이 있는 스페이스가 모두 연결됨 (꺼진 호스트에 쓰다 멈추지 않게) */
-  const canEdit = (ev) => state.writable && (ev.spaces || []).every((k) => { const sp = spaceByKey(k); return sp && sp.status === "online"; });
+  const canEdit = (ev) => (ev.spaces || []).every((k) => { const sp = spaceByKey(k); return sp && sp.status === "online" && !state.roSpaces.has(k); });
   /** 스페이스 표시 색: 개인 스페이스 = 회색, 팀 = 이름 해시 색 (태그 색과 같은 방식) */
   const spaceColor = (sp) => (!sp || sp.kind === "me" ? "var(--sp-me)" : `hsl(${CAL.tagHue("space:" + sp.name)} 55% 55%)`);
 
@@ -149,7 +150,13 @@
     sp = sp || state.space;
     if (!sp || !spBase(sp)) return;
     try {
-      state.evBySpace[sp.key] = (await api("/schedule", undefined, spBase(sp))).events || [];
+      const res = await api("/schedule", undefined, spBase(sp));
+      state.evBySpace[sp.key] = res.events || [];
+      const ro = res.writable === false;
+      if (ro !== state.roSpaces.has(sp.key)) {
+        if (ro) state.roSpaces.add(sp.key); else state.roSpaces.delete(sp.key);
+        if (state.space && sp.key === state.space.key) setWritable(!ro, true);   // 관리자가 권한을 바꾸면 바로 반영
+      }
     } catch (e) {
       return; // 예전 버전 dogani(일정 API 없음) 이거나 연결 끊김: 기존 것 유지
     }
@@ -176,6 +183,7 @@
         let m = same.find((x) => !x.spaces.includes(sp.key));
         if (!m) { m = { ...ev, copies: [], spaces: [] }; same.push(m); merged.set(id, same); list.push(m); }
         m.copies.push({ sp: sp.key, raw: ev.raw });
+        if (ev.who && !m.who) m.who = ev.who;
         m.spaces.push(sp.key);
       }
     }
@@ -537,10 +545,11 @@
   }
 
   // ------------------------------------------------------------ edit permission
-  function setWritable(w) {
+  /** soft = 편집 중인 내용은 그대로 두고 읽기 전용으로만 (권한이 바뀐 경우, 쓰던 글 날리지 않게) */
+  function setWritable(w, soft) {
     state.writable = w;
     document.body.classList.toggle("writable", w);
-    if (!w) { note.exit(); doc.exit(); }
+    if (!w && !soft) { note.exit(); doc.exit(); }
     note.setReadOnly(!w);
     doc.setReadOnly(!w);
     $("cal-edit").hidden = false;
@@ -730,7 +739,7 @@
       // 지금 보는 스페이스는 숨겼어도 고를 수 있게 (화면 공유 중에 새 일정 추가)
       const cur = state.space && !state.calHidden.has(state.space.key) ? null : schedSpaces().find((s) => state.space && s.key === state.space.key);
       $("ev-add-spaces").innerHTML = (cur ? [cur, ...shownSpaces()] : shownSpaces()).map((sp) => `<label title="${sp.kind === "me" ? "개인" : "팀스페이스"}">` +
-        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
+        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) ? " disabled" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
       $("ev-add-err").textContent = "";
@@ -782,7 +791,7 @@
         place: $("ev-add-place").value, memo: $("ev-add-memo").value,
       };
     },
-    spaceKeys() { return [...$("ev-add-spaces").querySelectorAll("input:checked")].map((i) => i.dataset.key); },
+    spaceKeys() { return [...$("ev-add-spaces").querySelectorAll("input:checked:not(:disabled)")].map((i) => i.dataset.key); },
     async submit() {
       const [st, en] = this.range();
       const keys = this.spaceKeys();

@@ -13,8 +13,11 @@
   * 초대장 코드를 5번 틀리면 그 IP 는 1분 동안 참여 금지
   * 토큰 = 팀원ID.발급시각.Ed25519 서명. 서명 키(개인키)는 호스트 PC 에만 있고 호스트가 직접 검증
   * 내보내기 = 팀원 목록에서 삭제, 다시 초대로 참여 = min_iat 올림
+- 권한: 팀원마다 perm = write(기본) | read. 관리자는 항상 write. 서버가 요청마다 확인 (토큰엔 안 넣음 → 바꾸면 바로 반영)
+- 작성자: 팀스페이스 일정 파일 저장 때 바뀐 줄의 작성·수정 팀원 id 를 .dogani/authors.json 에 기록 (이름은 볼 때 team.json 에서)
 """
 import datetime as dt
+import difflib
 import json
 import os
 import secrets
@@ -119,6 +122,8 @@ class TeamHost:
         self.store.refresh()
         self.store.pop_changes()   # 처음 읽은 것은 알릴 필요 없음
         self.hub = Hub()
+        self.authors_path = os.path.join(space.meta_dir(root), "authors.json")
+        self.authors = self._read_authors()
         self.owner_id = self._ensure_owner(owner_name)
 
     # -- storage
@@ -353,10 +358,82 @@ class TeamHost:
                 self._drop_invites(mid)
                 self._save()
 
+    # -- 권한
+    def can_write(self, mid):
+        with self.lock:
+            m = self.data["members"].get(mid)
+            return bool(m) and (m.get("admin") or m.get("perm", "write") != "read")
+
+    def set_perm(self, mid, perm):
+        if perm not in ("read", "write"):
+            raise TeamError("bad_perm", "권한은 read 또는 write 입니다.")
+        with self.lock:
+            m = self.data["members"].get(mid)
+            if not m or m.get("admin"):
+                return
+            if perm == "write":
+                m.pop("perm", None)
+            else:
+                m["perm"] = "read"
+            self._save()
+        self.hub.broadcast("schedule", {})   # 팀원 화면이 /schedule 을 다시 받으며 쓰기 가능 여부를 갱신
+
+    # -- 일정 작성자 (.dogani/authors.json: {줄 원문(앞뒤 공백 제거): {by, at, mod, mod_at}})
+    def _read_authors(self):
+        try:
+            with open(self.authors_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def record_sched(self, old, new, mid):
+        """일정 파일 저장 전후 원문을 비교해 바뀐 줄의 작성자·수정자를 기록. 바뀐 줄 = 수정, 새 줄 = 작성.
+        글자가 그대로인 줄은 위치가 바뀌어도 기록 유지. 이 파일에서 사라진 줄만 지움 (다른 일정 파일 기록은 그대로)"""
+        a = [l.strip() for l in (old or "").splitlines() if l.strip()]
+        b = [l.strip() for l in (new or "").splitlines() if l.strip()]
+        now = int(time.time())
+        with self.lock:
+            prev = self.authors
+            old_set, new_set = set(a), set(b)
+            out = {k: v for k, v in prev.items() if k not in old_set}   # 다른 파일의 줄
+            for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+                for k in range(j2 - j1):
+                    line = b[j1 + k]
+                    if line in out:
+                        continue
+                    if tag == "equal" or line in prev or line in old_set:   # 글자 그대로 (옮겨졌어도)
+                        rec = prev.get(line)
+                    elif tag == "replace" and i1 + k < i2 and a[i1 + k] not in new_set:   # 원래 줄이 사라짐 = 고침
+                        base = prev.get(a[i1 + k]) or {}
+                        rec = {"by": base.get("by", ""), "at": base.get("at", 0), "mod": mid, "mod_at": now}
+                    else:
+                        rec = {"by": mid, "at": now}
+                    if rec:
+                        out[line] = rec
+            self.authors = out
+        try:
+            space.write_json(self.authors_path, out)   # 파일 쓰기는 잠금 밖에서 (인증 요청을 막지 않게)
+        except OSError:
+            pass   # 기록 실패는 일정 저장을 막지 않음
+
+    def with_authors(self, events):
+        """일정 목록에 작성·수정 팀원 이름(who) 붙이기. 기록 없는 줄(옵시디언에서 직접 고침 등)은 그대로"""
+        with self.lock:
+            authors, members = self.authors, self.data["members"]
+            name = lambda i: (members.get(i) or {}).get("name", "(나간 팀원)") if i else ""
+            out = []
+            for ev in events:
+                rec = authors.get((ev.get("raw") or "").strip())
+                out.append({**ev, "who": {"by": name(rec.get("by")), "at": rec.get("at", 0),
+                                          "mod": name(rec.get("mod")), "mod_at": rec.get("mod_at", 0)}} if rec else ev)
+            return out
+
     def members(self):
         now = time.time()
         with self.lock:
             out = [{"id": mid, "name": m["name"], "addr": m.get("addr", ""), "admin": bool(m.get("admin")),
+                    "perm": "write" if m.get("admin") else m.get("perm", "write"),
                     "min_iat": m.get("min_iat", 0),
                     "online": now - m.get("last_seen", 0) < ONLINE_WINDOW or bool(m.get("admin")),
                     "last_seen": m.get("last_seen", 0)}
