@@ -550,8 +550,8 @@ body.writable .cm-table-widget { cursor: text; }
 .ev.arrow .bar-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ev.arrow .bar-label::before { content: none !important; }
 /* 일정 마우스오버 = 클릭(수정)·드래그(옮기기) 가능 표시 */
-body.writable .cal-grid .ev[data-k]:not(.team) { cursor: grab; }
-body.writable .cal-grid .ev[data-k]:not(.team):hover { filter: brightness(1.25); outline: 1px solid var(--ev); outline-offset: -1px; }
+body.writable .cal-grid .ev[data-k] { cursor: grab; }
+body.writable .cal-grid .ev[data-k]:hover { filter: brightness(1.25); outline: 1px solid var(--ev); outline-offset: -1px; }
 body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: color-mix(in srgb, var(--ev) 15%, transparent); }
 .cal-day .ev.moving { opacity: .4; }
 .ev.ev-more { background: none; color: var(--text-muted); padding: 0 2px; font-weight: 600; }
@@ -700,9 +700,18 @@ body.mode-nav #root { gap: 4px; }
 #doc-body .cm-line { padding: 0; }
 #doc-body.has-editor { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 
-/* 개인 공간 달력에 같이 그리는 공용 일정: 점선 테두리 */
-.ev.team { outline: 1px dashed color-mix(in srgb, var(--ev) 70%, transparent); outline-offset: -1px; }
-.cal-day .ev.bar.team { outline-offset: -1px; }
+/* 스페이스 표시: 일정 앞 색 막대 (스페이스가 둘 이상 보일 때만), 달력 위 스페이스 체크 */
+:root { --sp-me: #8b93a1; }
+.spm { display: inline-block; flex: none; width: 3px; height: 10px; margin-right: 3px; border-radius: 1px; vertical-align: -1px; }
+.spm.multi { width: 4px; }
+.cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px 0; font-size: 11px; }
+.cal-spaces[hidden] { display: none; }
+.cal-spaces label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.cal-spaces label { padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); }
+.cal-spaces label:has(input:checked) { color: var(--text); }
+.cal-spaces label:not(:has(input:checked)) i { opacity: .25; }
+.cal-spaces input { display: none; }
+.cal-spaces i, .ev-add-opts i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
 
 /* ------------------------------------------------------------ 달력 우클릭·드래그: 일정 추가 팝업 */
 .ev-add {

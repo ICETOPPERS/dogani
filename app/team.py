@@ -1,10 +1,10 @@
 """
-팀스페이스 (공용 공간 + 팀원 식별)
+팀 스페이스 (팀원이 같이 쓰는 폴더 + 팀원 식별)
 
 - 팀 호스트: 팀원 중 한 사람의 dogani 가 맡는다 (켜 두는 시간이 긴 PC 추천).
-  팀 볼트 = 호스트 PC 의 폴더 하나 (개인 볼트와 같은 형식, vault.py). 노트·일정은 평범한 md 파일
-  팀 설정(이름·팀원)은 볼트의 .dogani/team.json, 서명 키·초대장은 호스트 PC 의 %APPDATA%\\dogani\\team\\<볼트id>.json
-  (볼트 폴더가 복사·동기화돼도 비밀값은 따라가지 않음)
+  팀 스페이스 = 호스트 PC 의 폴더 하나 (개인 스페이스와 같은 형식, space.py). 노트·일정은 평범한 md 파일
+  팀 설정(이름·팀원)은 스페이스의 .dogani/team.json, 서명 키·초대장은 호스트 PC 의 %APPDATA%\\dogani\\team\\<스페이스id>.json
+  (스페이스 폴더가 복사·동기화돼도 비밀값은 따라가지 않음)
 - 인증 (IT 회사가 아닌 사무실 수준):
   * 팀 참여 = 호스트 주소 + 초대장 코드(사람마다 다름, 12자리, 한 번 쓰면 폐기, 15분 뒤 만료).
     이름은 따로 안 묻고 그 PC 의 '내 이름'(기본 PC 이름)을 씀. 다시 초대는 팀에 있던 이름 유지
@@ -23,7 +23,7 @@ import time
 from functools import lru_cache
 
 import ed25519
-import vault
+import space
 
 INVITE_TTL = 15 * 60    # 초대장 유효 시간(초)
 INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # 헷갈리는 0/O, 1/I 제외
@@ -33,7 +33,7 @@ FAIL_LOCK = 60          # 초
 ONLINE_WINDOW = 75      # 마지막 신호가 이 안이면 접속 중 (클라이언트는 20초마다 보냄)
 NAME_MAX = 20
 
-SCHEDULE_SEED = """# 공용 일정
+SCHEDULE_SEED = """# 팀 일정
 
 > 한 줄 = 일정 하나:  `날짜, 제목, #태그, 장소, 메모`
 > 날짜 **굵게** = 중요 · ==하이라이트== = 쉬는 날(회사 휴무) · *기울임* = 기간을 화살표로
@@ -95,16 +95,16 @@ class TeamError(Exception):
 
 # ---------------------------------------------------------------- host
 class TeamHost:
-    """팀 볼트 + 팀 데이터: 볼트/.dogani/team.json(이름·팀원) + 키 파일(서명 키·초대장, 이 PC 에만)"""
+    """팀 스페이스 + 팀 데이터: 스페이스/.dogani/team.json(이름·팀원) + 키 파일(서명 키·초대장, 이 PC 에만)"""
 
-    PRIVATE = ("sign_key", "invites")   # 볼트에 두지 않는 값
+    PRIVATE = ("sign_key", "invites")   # 스페이스에 두지 않는 값
 
     def __init__(self, root, key_dir, owner_name, legacy_dir=None):
         from server import Hub, NoteStore  # 순환 import 방지
         self.lock = threading.Lock()
         self.root = self.notes_dir = root
-        meta = vault.open_vault(root)
-        self.path = os.path.join(vault.meta_dir(root), "team.json")
+        meta = space.open_space(root)
+        self.path = os.path.join(space.meta_dir(root), "team.json")
         self.key_path = os.path.join(key_dir, f"{meta['id']}.json")
         self.data = self._load(legacy_dir)
         if self.data.pop("_dirty", False):   # 새 서명 키는 바로 저장 (안 그러면 재시작마다 키가 바뀜)
@@ -137,7 +137,7 @@ class TeamHost:
             data = read(legacy) or {}
             data["_dirty"] = True
             data["_legacy"] = legacy
-        data.setdefault("name", "팀 공용")
+        data.setdefault("name", "팀 스페이스")
         # 예전 HMAC 비밀키는 팀원 PC 에 퍼져 있어서 위조에 쓰일 수 있음 → 버리고 서명 키로 교체
         # (예전 토큰은 모두 무효, 팀원은 초대장으로 한 번 다시 참여)
         if "secret" in data or "sign_key" not in data:
@@ -156,9 +156,9 @@ class TeamHost:
 
     def _save(self):
         legacy = self.data.pop("_legacy", None)
-        # 키 파일 먼저 (볼트만 저장되고 키가 없으면 다음 실행에 새 키 = 모든 토큰 무효)
-        vault.write_json(self.key_path, {k: self.data[k] for k in self.PRIVATE})
-        vault.write_json(self.path, {k: v for k, v in self.data.items() if k not in self.PRIVATE})
+        # 키 파일 먼저 (스페이스만 저장되고 키가 없으면 다음 실행에 새 키 = 모든 토큰 무효)
+        space.write_json(self.key_path, {k: self.data[k] for k in self.PRIVATE})
+        space.write_json(self.path, {k: v for k, v in self.data.items() if k not in self.PRIVATE})
         if legacy:
             try:
                 os.replace(legacy, legacy + ".migrated")

@@ -7,9 +7,9 @@
 </head>
 <body class="theme-light mode-nav">
   <div id="root">
-    <!-- 네비게이션 바 (하나뿐): 공간 이름 ▾ · 할일 날짜 이동 · 할일/달력 버튼 -->
+    <!-- 네비게이션 바 (하나뿐): 스페이스 이름 ▾ · 할일 날짜 이동 · 할일/달력 버튼 -->
     <nav id="nav" title="드래그해서 이동">
-      <button id="space-btn" class="space-btn" title="공간 고르기 (공용 / 개인)">
+      <button id="space-btn" class="space-btn" title="스페이스 고르기 (팀 / 내)">
         <span id="status-dot" class="dot"></span>
         <span id="space-name"></span>
         <svg class="caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
@@ -22,7 +22,7 @@
       </button>
     </nav>
 
-    <!-- 공간 메뉴 (노션 사이드바처럼 공용 / 개인) -->
+    <!-- 스페이스 메뉴 (팀 스페이스 / 내 스페이스) -->
     <div id="space-menu" class="space-menu" hidden></div>
 
     <section id="panel" hidden>
@@ -54,6 +54,8 @@
           <button class="text-btn" id="cal-edit" title="일정 파일 편집">일정 편집</button>
           <button class="icon-btn close-btn" title="닫기">&#x2715;</button>
         </div>
+        <!-- 달력에 일정을 보일 스페이스 (체크 끄면 숨김, 할일 창 일정 줄도 같이) -->
+        <div id="cal-spaces" class="cal-spaces" hidden></div>
         <div id="cal-grid" class="cal-grid"></div>
         <footer class="view-footer" id="cal-footer"></footer>
         <form id="ev-add" class="ev-add" hidden autocomplete="off">
@@ -68,6 +70,8 @@
             <label><input type="checkbox" id="ev-add-off">쉬는 날</label>
           </div>
           <div class="ev-add-grid">
+            <span class="k" title="여러 개 고르면 각 스페이스 일정 파일에 같은 줄을 넣음">스페이스</span>
+            <div class="v ev-add-opts" id="ev-add-spaces"></div>
             <span class="k">날짜</span>
             <div class="v">
               <input type="date" id="ev-add-start"><span class="sep">-</span><input type="date" id="ev-add-end">

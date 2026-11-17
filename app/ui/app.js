@@ -1,8 +1,8 @@
 /*
  * 오버레이 UI 로직. 같은 페이지를 세 가지 창으로 쓴다 (state.mode)
- * - nav : 네비게이션 바 (하나뿐). 공간 이름 ▾ 를 누르면 공간 메뉴(공용 / 개인), 할일 날짜 이동, 할일·달력 버튼
- * - note: 할일 창. 고른 공간의 그날 노트 (CodeMirror 라이브 프리뷰, 쓰기 권한 있을 때만 편집)
- * - cal : 달력 창. 고른 공간의 월 달력 + 일정 파일 편집 (개인 공간이면 공용 일정도 같이 표시)
+ * - nav : 네비게이션 바 (하나뿐). 스페이스 이름 ▾ 를 누르면 스페이스 메뉴(팀 / 내), 할일 날짜 이동, 할일·달력 버튼
+ * - note: 할일 창. 고른 스페이스의 그날 노트 (CodeMirror 라이브 프리뷰, 쓰기 권한 있을 때만 편집)
+ * - cal : 달력 창. 고른 스페이스의 월 달력 + 일정 파일 편집 (일정은 위에서 체크한 스페이스들을 합쳐 표시)
  * 창 이동/크기/창끼리 연락은 QWebChannel 의 bridge 객체로 파이썬에 요청
  */
 (function () {
@@ -23,7 +23,6 @@
     mode: "nav",       // nav | note | cal
     space: null,       // { key, name, server, prefix, kind: me|team|peer, status }
     spaces: [],        // nav: 메뉴 목록
-    team: null,        // { server, prefix } 개인 공간 달력에 같이 그릴 공용 일정
     base: "",          // "http://ip:port/api" 또는 ".../api/team"
     today: iso(new Date()),
     noteDate: iso(new Date()),
@@ -33,8 +32,8 @@
     es: null,
     retryTimer: null,
     writable: false,
-    ownEvents: [],
-    teamEvents: [],
+    calHidden: new Set(), // 달력·할일 일정에서 숨긴 스페이스 키 (설정 cal_hidden, 창끼리 같이 씀)
+    evBySpace: {},     // 스페이스 키 → /schedule 일정 목록
     sched: null,       // 일정 색인 (CAL.index)
   };
   let bridge = null;
@@ -61,8 +60,8 @@
     offline: "연결할 수 없습니다.",
     paused: "상대방이 공유를 일시 중지했습니다.",
     blocked: "상대방이 접속을 차단했습니다.",
-    team_only: "팀원에게만 공유하는 노트입니다. (트레이 > 팀스페이스 > 팀 참여)",
-    not_member: "팀 로그인이 필요합니다. (트레이 > 팀스페이스)",
+    team_only: "팀원에게만 공유하는 노트입니다. (트레이 > 팀 스페이스 > 팀 참여)",
+    not_member: "팀 로그인이 필요합니다. (트레이 > 팀 스페이스)",
     client_only: "접속 키가 맞지 않습니다. (dogani 버전 확인)",
     conflict: "그 사이 다른 곳(옵시디언·다른 팀원)에서 수정되어 저장하지 않았습니다. 다시 불러옵니다.",
     read_only: "편집 권한이 없습니다.",
@@ -84,7 +83,6 @@
     setStatus("offline");
     const sp = state.space;
     state.base = sp && sp.server ? "http://" + sp.server + sp.prefix : "";
-    state.ownEvents = [];
     rebuildSched();
     if (!state.base) return;
 
@@ -131,38 +129,76 @@
     else if (state.mode === "cal") { if (state.calView === "doc") doc.reloadIfIdle(); else loadMonth(); }
   }
 
-  // ------------------------------------------------------------ schedule (내 공간 일정 + 공용 일정)
-  async function loadSchedule() {
+  // ------------------------------------------------------------ schedule (보이는 스페이스들의 일정을 합쳐 그림)
+  const spBase = (sp) => (sp && sp.server ? "http://" + sp.server + sp.prefix : "");
+  const spaceByKey = (k) => state.spaces.find((s) => s.key === k) || (state.space && state.space.key === k ? state.space : null);
+  /** 일정을 읽을 수 있는 스페이스 (지금 보는 스페이스 먼저). 다시 로그인 필요(blocked)·꺼진 항목은 뺌 */
+  function schedSpaces() {
+    const list = state.spaces.length ? state.spaces.filter((s) => s.server && !s.disabled && s.status !== "blocked")
+      : state.space ? [state.space] : [];
+    const cur = state.space && list.find((s) => s.key === state.space.key);
+    return cur ? [cur, ...list.filter((s) => s !== cur)] : list;
+  }
+  const shownSpaces = () => schedSpaces().filter((s) => !state.calHidden.has(s.key));
+  /** 일정을 고칠 수 있음 = 쓰기 권한 + 그 일정이 있는 스페이스가 모두 연결됨 (꺼진 호스트에 쓰다 멈추지 않게) */
+  const canEdit = (ev) => state.writable && (ev.spaces || []).every((k) => { const sp = spaceByKey(k); return sp && sp.status === "online"; });
+  /** 스페이스 표시 색: 내 스페이스 = 회색, 팀 = 이름 해시 색 (태그 색과 같은 방식) */
+  const spaceColor = (sp) => (!sp || sp.kind === "me" ? "var(--sp-me)" : `hsl(${CAL.tagHue("space:" + sp.name)} 55% 55%)`);
+
+  async function loadSchedule(sp) {
+    sp = sp || state.space;
+    if (!sp || !spBase(sp)) return;
     try {
-      state.ownEvents = (await api("/schedule")).events || [];
+      state.evBySpace[sp.key] = (await api("/schedule", undefined, spBase(sp))).events || [];
     } catch (e) {
       return; // 예전 버전 dogani(일정 API 없음) 이거나 연결 끊김: 기존 것 유지
     }
     rebuildSched();
   }
 
-  async function loadTeamSchedule() {
-    const t = state.team;
-    if (!t || !state.space || state.space.kind === "team" || state.mode === "nav") {
-      if (state.teamEvents.length) { state.teamEvents = []; rebuildSched(); }
-      return;
-    }
-    try {
-      const evs = (await api("/schedule", undefined, "http://" + t.server + t.prefix)).events || [];
-      state.teamEvents = evs.map((ev) => ({ ...ev, team: true }));
-    } catch (e) {
-      return;
-    }
-    rebuildSched();
+  /** 지금 보는 스페이스 말고 보이는 스페이스들 (지금 스페이스는 SSE 로 바로 받음, 나머지는 1분마다) */
+  function loadOtherSchedules() {
+    if (state.mode === "nav") return;
+    for (const sp of shownSpaces()) if (!state.space || sp.key !== state.space.key) loadSchedule(sp);
   }
 
+  const timeKey = (ev) => (ev.time || "").split("-")[0].padStart(5, "0");
+  /**
+   * 보이는 스페이스의 일정을 합침. 같은 일정(같은 줄로 저장되는 내용)이 여러 스페이스에 있으면 하나로 그리고
+   * copies = [{sp, raw}] 에 어디 있는지 모아 둠 → 고치면 모든 사본을 같이 고침.
+   * 한 스페이스 안의 똑같은 줄 두 개는 합치지 않음 (스페이스당 사본 하나)
+   */
   function rebuildSched() {
-    state.sched = CAL.index(state.ownEvents.concat(state.teamEvents));
+    const shown = shownSpaces(), merged = new Map(), list = [];
+    for (const sp of shown) {
+      for (const ev of state.evBySpace[sp.key] || []) {
+        const id = schedLine(evToObj(ev)), same = merged.get(id) || [];
+        let m = same.find((x) => !x.spaces.includes(sp.key));
+        if (!m) { m = { ...ev, copies: [], spaces: [] }; same.push(m); merged.set(id, same); list.push(m); }
+        m.copies.push({ sp: sp.key, raw: ev.raw });
+        m.spaces.push(sp.key);
+      }
+    }
+    for (const m of list) {
+      // 스페이스가 둘 이상 보일 때만 어느 스페이스 일정인지 표시 (색 막대 + 툴팁)
+      m.spaceMarks = shown.length > 1 ? m.spaces.map((k) => { const sp = spaceByKey(k); return { name: sp ? sp.name : k, color: spaceColor(sp) }; }) : null;
+    }
+    list.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
+    state.sched = CAL.index(list);
     if (state.mode === "cal" && state.calView === "month") renderMonth();
     if (state.mode === "note") renderSchedRow();
   }
 
-  // ------------------------------------------------------------ 문서 편집 칸 (할일 노트 / 일정 파일 공용)
+  /** 달력 위 스페이스 체크 (끄면 그 스페이스 일정을 달력·할일 창에서 숨김. 화면 공유할 때 내 일정 숨기기 등) */
+  function renderSpaceFilter() {
+    const box = $("cal-spaces");
+    const list = schedSpaces();
+    box.hidden = !list.length;
+    box.innerHTML = list.map((sp) => `<label title="${esc(sp.kind === "me" ? "내 스페이스" : "팀 스페이스")} 일정 보이기"><input type="checkbox" data-key="${esc(sp.key)}"${state.calHidden.has(sp.key) ? "" : " checked"}>` +
+      `<i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
+  }
+
+  // ------------------------------------------------------------ 문서 편집 칸 (할일 노트 / 일정 파일 같이 씀)
   /**
    * o = { body, footer, key(): 지금 보여줄 문서 키, fetch(key), post(key, content, baseMtime, base),
    *       empty(doc): 문서 없을 때 HTML, loaded(doc), progress: bool }
@@ -238,7 +274,7 @@
 
     p.reloadIfIdle = () => { if (!p.editing) p.load(true); };
 
-    /** 저장은 순서대로 하나씩 (자동 저장이 겹치면 mtime 충돌이 나므로). 공간·날짜는 부른 시점 기준 */
+    /** 저장은 순서대로 하나씩 (자동 저장이 겹치면 mtime 충돌이 나므로). 스페이스·날짜는 부른 시점 기준 */
     p.save = () => {
       clearTimeout(timer);
       if (!p.lines || p.key == null) return chain;
@@ -415,7 +451,7 @@
     key: () => state.base + "|sched",
     fetch: () => api("/sched-doc"),
     post: (key, content, base_mtime, base) => api("/sched-doc", { content, base_mtime }, base),
-    empty: (d) => (d.no_dir ? "todo 폴더가 지정되지 않았습니다." : state.writable ? "일정 파일이 없습니다.<br>클릭해서 작성" : "일정 파일이 없습니다."),
+    empty: (d) => (d.no_dir ? "스페이스 폴더가 지정되지 않았습니다." : state.writable ? "일정 파일이 없습니다.<br>클릭해서 작성" : "일정 파일이 없습니다."),
     loaded: (d) => { $("doc-title").textContent = d.title || "일정"; },
   });
 
@@ -428,8 +464,8 @@
     else loadMonth();
   }
 
-  // ------------------------------------------------------------ nav (네비게이션 바 + 공간 메뉴)
-  const GROUPS = [["team", "팀 볼트"], ["me", "내 볼트"]];
+  // ------------------------------------------------------------ nav (네비게이션 바 + 스페이스 메뉴)
+  const GROUPS = [["team", "팀 스페이스"], ["me", "내 스페이스"]];
 
   function renderNav(cfg) {
     const sp = state.space;
@@ -437,7 +473,7 @@
     const dot = $("status-dot");
     for (const s of ["online", "paused", "blocked"]) dot.classList.toggle(s, (sp.status === "team_only" ? "blocked" : sp.status) === s);
     $("space-name").textContent = sp.name;
-    $("nav").title = `${sp.kind === "team" ? "팀 볼트" : "내 볼트"} · 드래그해서 이동`;
+    $("nav").title = `${sp.kind === "team" ? "팀 스페이스" : "내 스페이스"} · 드래그해서 이동`;
     renderMenu(cfg);
     reportNavSize();
   }
@@ -448,7 +484,7 @@
     for (const [group, title] of GROUPS) {
       const items = state.spaces.filter((s) => s.group === group);
       if (group === "team" && !items.length) {
-        html += `<div class="sm-title">팀 볼트</div>`;
+        html += `<div class="sm-title">팀 스페이스</div>`;
         html += `<button class="sm-item sm-action" data-action="join_team"><span class="sm-glyph">+</span><span class="sm-name">팀 참여하기...</span></button>`;
         if ((cfg || {}).teamState === "none") {
           html += `<button class="sm-item sm-action" data-action="start_host"><span class="sm-glyph">⌂</span><span class="sm-name">새 팀 만들기 (이 PC 가 호스트)...</span></button>`;
@@ -467,7 +503,7 @@
     }
     html += `<div class="sm-sep"></div>`;
     html += `<button class="sm-item sm-action" data-action="rename"><span class="sm-glyph">✎</span><span class="sm-name">내 이름 바꾸기</span></button>`;
-    html += `<button class="sm-item sm-action" data-action="browse_dir"><span class="sm-glyph">+</span><span class="sm-name">볼트 열기...</span></button>`;
+    html += `<button class="sm-item sm-action" data-action="browse_dir"><span class="sm-glyph">+</span><span class="sm-name">스페이스 열기...</span></button>`;
     $("space-menu").innerHTML = html;
   }
 
@@ -563,8 +599,8 @@
   $("cal-grid").addEventListener("click", (e) => {
     if (dragged) { dragged = false; return; }  // 드래그로 기간 고르거나 일정 옮긴 뒤의 click 은 무시
     const ev = evOf(e.target.closest(".ev[data-k]"));
-    // 일정 클릭 = 수정 팝업 (공용 일정·읽기 전용이면 그냥 노트 열기)
-    if (ev && state.writable && !ev.team) { evAdd.open("", "", e.clientX, e.clientY, ev); return; }
+    // 일정 클릭 = 수정 팝업 (읽기 전용이면 그냥 노트 열기)
+    if (ev && canEdit(ev)) { evAdd.open("", "", e.clientX, e.clientY, ev); return; }
     const cell = e.target.closest(".cal-day");
     if (!cell) return;
     state.noteDate = cell.dataset.date;
@@ -607,14 +643,15 @@
       title: ev.title, tags: ev.tags || [], place: ev.place || "", memo: ev.memo || "",
     };
   }
-  /** 일정 파일 고치기: fn(text) → 새 text. 충돌(409) 나면 다시 읽고 한 번 더 */
-  async function editSchedDoc(fn) {
+  /** 스페이스 sp 의 일정 파일 고치기: fn(text) → 새 text. 충돌(409) 나면 다시 읽고 한 번 더 */
+  async function editSchedDoc(sp, fn) {
+    const base = spBase(sp);
     for (let tries = 0; tries < 2; tries++) {
       try {
-        const d = await api("/sched-doc");
-        if (d.no_dir) throw new Error("todo 폴더가 지정되지 않았습니다.");
-        await api("/sched-doc", { content: fn(d.exists ? d.content : ""), base_mtime: d.exists ? d.mtime : undefined });
-        await loadSchedule();   // 달력은 rebuildSched 가 다시 그림
+        const d = await api("/sched-doc", undefined, base);
+        if (d.no_dir) throw new Error("스페이스 폴더가 지정되지 않았습니다.");
+        await api("/sched-doc", { content: fn(d.exists ? d.content : ""), base_mtime: d.exists ? d.mtime : undefined }, base);
+        await loadSchedule(sp);   // 달력은 rebuildSched 가 다시 그림
         return;
       } catch (e) {
         if (e.code === "conflict" && tries === 0) continue;  // 그 사이 파일이 바뀜
@@ -622,19 +659,42 @@
       }
     }
   }
-  /** ev 원래 줄(raw)을 새 줄로 바꿈 (null = 지움). 목록 기호(- [ ] 등)·들여쓰기는 그대로 둠 */
-  function replaceEvLine(ev, line) {
-    return editSchedDoc((text) => {
-      const lines = text.split("\n");
-      const i = lines.findIndex((l) => l.trim() === ev.raw);
-      if (i < 0) throw new Error("일정 파일에서 이 줄을 찾지 못했습니다 (다른 일정 파일에 있거나 그 사이 바뀜). '일정 편집'에서 고쳐 주세요.");
-      if (line === null) lines.splice(i, 1);
-      else {
-        const lead = lines[i].match(/^\s*/)[0], m = lines[i].trim().match(LIST_RE);
-        lines[i] = lead + (m ? m[1] : "") + line + (lines[i].endsWith("\r") ? "\r" : "");
+  /**
+   * 일정 쓰기: line 을 keys(스페이스 키들)에 둠. ev(수정 중인 일정)의 사본(copies)은
+   * keys 에 든 스페이스면 첫 줄을 바꾸고(목록 기호·들여쓰기 유지) 나머지는 지움. 사본이 없는 스페이스엔 끝에 덧붙임.
+   * line = null 이면 모든 사본 삭제. 스페이스마다 따로 저장 → 일부 실패하면 실패한 곳만 모아 알림
+   */
+  async function writeEv(ev, line, keys) {
+    const copies = ev ? ev.copies || [] : [];
+    const errs = [], targets = new Set([...copies.map((c) => c.sp), ...keys]);
+    for (const key of targets) {
+      const sp = spaceByKey(key);
+      if (!sp) { errs.push(`${key}: 스페이스를 찾지 못했습니다`); continue; }
+      const mine = copies.filter((c) => c.sp === key), want = line !== null && keys.includes(key);
+      try {
+        await editSchedDoc(sp, (text) => {
+          const lines = text.split("\n");
+          mine.forEach((c, n) => {
+            const i = lines.findIndex((l) => l.trim() === c.raw);
+            if (i < 0) throw new Error("일정 파일에서 이 줄을 찾지 못했습니다 (다른 일정 파일에 있거나 그 사이 바뀜). '일정 편집'에서 고쳐 주세요.");
+            if (want && n === 0) {
+              const lead = lines[i].match(/^\s*/)[0], m = lines[i].trim().match(LIST_RE);
+              lines[i] = lead + (m ? m[1] : "") + line + (lines[i].endsWith("\r") ? "\r" : "");
+            } else lines.splice(i, 1);
+          });
+          let out = lines.join("\n");
+          if (want && !mine.length) out = (out && !out.endsWith("\n") ? out + "\n" : out) + line + "\n";
+          return out;
+        });
+      } catch (e) {
+        errs.push(`${sp.name}: ${e.message || e}`);
       }
-      return lines.join("\n");
-    });
+    }
+    if (errs.length) {
+      const err = new Error(errs.join(" / "));
+      err.partial = errs.length < targets.size;  // 일부는 저장됨
+      throw err;
+    }
   }
 
   const evAdd = {
@@ -665,6 +725,12 @@
       const hasMemo = !!(o && o.memo);
       $("ev-add-memo-row").hidden = $("ev-add-memo-k").hidden = !hasMemo;
       $("ev-add-memo-btn").hidden = hasMemo;
+      // 스페이스 고르기: 보이는 스페이스만 (새 일정 = 지금 보는 스페이스, 수정 = 그 일정이 있는 스페이스들)
+      const keys = ev ? ev.spaces || [] : [state.space && state.space.key];
+      // 지금 보는 스페이스는 숨겼어도 고를 수 있게 (화면 공유 중에 새 일정 추가)
+      const cur = state.space && !state.calHidden.has(state.space.key) ? null : schedSpaces().find((s) => state.space && s.key === state.space.key);
+      $("ev-add-spaces").innerHTML = (cur ? [cur, ...shownSpaces()] : shownSpaces()).map((sp) => `<label title="${sp.kind === "me" ? "내 스페이스" : "팀 스페이스"}">` +
+        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
       $("ev-add-err").textContent = "";
@@ -716,8 +782,11 @@
         place: $("ev-add-place").value, memo: $("ev-add-memo").value,
       };
     },
+    spaceKeys() { return [...$("ev-add-spaces").querySelectorAll("input:checked")].map((i) => i.dataset.key); },
     async submit() {
       const [st, en] = this.range();
+      const keys = this.spaceKeys();
+      if (!keys.length) { $("ev-add-err").textContent = "스페이스를 하나 이상 고르세요"; return; }
       if (!st && !en) { $("ev-add-err").textContent = this.kind === "event" ? "시작 날짜를 고르세요" : "날짜를 하나 이상 고르세요"; return; }
       const t1 = $("ev-add-t1").value, t2 = $("ev-add-t2").value;
       if (t1 && t2 && timeMin(t2) <= timeMin(t1)) {
@@ -726,20 +795,26 @@
       if (!$("ev-add-name").value.trim()) return;
       const line = schedLine(this.values());
       try {
-        if (this.ev) await replaceEvLine(this.ev, line);
-        else await editSchedDoc((text) => (text && !text.endsWith("\n") ? text + "\n" : text) + line + "\n");
+        await writeEv(this.ev, line, keys);
         this.close();
       } catch (e) {
-        $("ev-add-err").textContent = (this.ev ? "저장 실패: " : "추가 실패: ") + (e.message || e);
+        const msg = (this.ev ? "저장 실패: " : "추가 실패: ") + (e.message || e);
+        // 일부 스페이스만 저장됨 → 팝업 내용(사본 위치)이 낡아 다시 누르면 꼬임. 닫고 다시 열게 함
+        if (e.partial) { this.close(); alert(msg + "\n\n나머지 스페이스는 저장됐습니다. 일정을 다시 열어 확인하세요."); }
+        else $("ev-add-err").textContent = msg;
       }
     },
     async remove() {
-      if (!this.ev || !confirm(`'${this.ev.title}' 일정을 지울까요?`)) return;
+      if (!this.ev) return;
+      const where = (this.ev.spaces || []).length > 1
+        ? `\n(${this.ev.spaces.map((k) => (spaceByKey(k) || { name: k }).name).join(", ")} 모두에서 지웁니다. 한 곳에서만 빼려면 그 스페이스 체크를 끄고 저장)` : "";
+      if (!confirm(`'${this.ev.title}' 일정을 지울까요?${where}`)) return;
       try {
-        await replaceEvLine(this.ev, null);
+        await writeEv(this.ev, null, []);
         this.close();
       } catch (e) {
-        $("ev-add-err").textContent = "삭제 실패: " + (e.message || e);
+        if (e.partial) { this.close(); alert("삭제 실패: " + (e.message || e) + "\n\n나머지 스페이스에서는 지웠습니다."); }
+        else $("ev-add-err").textContent = "삭제 실패: " + (e.message || e);
       }
     },
   };
@@ -775,8 +850,8 @@
     const evEl = e.target.closest(".ev[data-k]");
     const ev = evOf(evEl);
     if (ev && e.button === 0) {
-      // 일정 위 왼쪽 버튼: 옮기기 준비 (그냥 떼면 click → 수정 팝업). 공용 일정·읽기 전용은 안 됨
-      const c = state.writable && !ev.team && cellAt(e.clientX, e.clientY);
+      // 일정 위 왼쪽 버튼: 옮기기 준비 (그냥 떼면 click → 수정 팝업). 읽기 전용은 안 됨
+      const c = canEdit(ev) && cellAt(e.clientX, e.clientY);
       if (c) move = { ev, el: evEl, from: c.dataset.date, to: c.dataset.date };
       return;
     }
@@ -812,7 +887,7 @@
       if (o.s) o.s = CAL.addDays(o.s, n);
       if (o.e) o.e = CAL.addDays(o.e, n);
       try {
-        await replaceEvLine(m.ev, schedLine(o));
+        await writeEv(m.ev, schedLine(o), m.ev.spaces || []);
       } catch (err) {
         alert("옮기기 실패: " + (err.message || err));
       }
@@ -825,6 +900,14 @@
     dragged = btn === 0;
     markRange(r);
     evAdd.open(r[0], r[1], e.clientX, e.clientY);
+  });
+  $("cal-spaces").addEventListener("change", (e) => {
+    const key = e.target.dataset.key;
+    if (!key) return;
+    if (e.target.checked) state.calHidden.delete(key); else state.calHidden.add(key);
+    if (bridge) bridge.setCalHidden(JSON.stringify([...state.calHidden]));  // 설정 저장 + 할일 창도 따라감
+    rebuildSched();
+    if (e.target.checked) loadSchedule(spaceByKey(key));
   });
   $("ev-add").addEventListener("submit", (e) => { e.preventDefault(); evAdd.submit(); });
   $("ev-add").addEventListener("input", () => evAdd.update());
@@ -861,7 +944,7 @@
   });
   document.addEventListener("contextmenu", (e) => e.preventDefault());
   setInterval(checkDateRollover, 30 * 1000);
-  setInterval(loadTeamSchedule, 60 * 1000);
+  setInterval(loadOtherSchedules, 60 * 1000);
   let fitTimer = null;
   // 창 크기뿐 아니라 숨어 있다 보일 때도(그릴 때 숨어 있으면 넘침 정리가 안 돼 띠가 겹침) 다시 맞춤
   new ResizeObserver(() => {
@@ -875,7 +958,7 @@
   window.App = {
     /**
      * 파이썬에서 호출 (바뀐 값만 와도 됨)
-     * { mode, theme, space, team, date, noteDate,  nav: spaces, open, noteLabel, me, teamState }
+     * { mode, theme, space, spaces, calHidden, date, noteDate,  nav: open, noteLabel, me, teamState }
      */
     configure(cfg) {
       if (cfg.theme) {
@@ -896,7 +979,7 @@
         if (bridge) bridge.setExpanded(panel);
       }
       if (cfg.spaces) state.spaces = cfg.spaces;
-      if (cfg.team !== undefined) state.team = cfg.team;
+      if (cfg.calHidden) state.calHidden = new Set(cfg.calHidden);
       let moved = false;
       if (cfg.space) {
         moved = !sameSpace(cfg.space, state.space);
@@ -914,9 +997,13 @@
         state.writable = false;
         document.body.classList.remove("writable");
         connect();
-        loadTeamSchedule();
-      } else if (cfg.team !== undefined) {
-        loadTeamSchedule();
+      }
+      if (moved || cfg.spaces || cfg.calHidden) {
+        renderSpaceFilter();
+        rebuildSched();
+        // 상태만 바뀐 push(20초마다 팀 확인 등)엔 다시 받지 않음: 보이는 스페이스 목록이 바뀔 때만
+        const sig = shownSpaces().map((s) => s.key + "@" + spBase(s)).join("|");
+        if (sig !== state.schedSig) { state.schedSig = sig; loadOtherSchedules(); }
       }
       if (state.mode === "note" && (first || moved)) showNote(first ? cfg.date || state.today : state.noteDate);
       if (state.mode === "cal") {

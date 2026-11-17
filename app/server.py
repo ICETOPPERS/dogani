@@ -1,9 +1,9 @@
 """
 노트 서버 (dogani.py 안에서 스레드로 실행)
 
-- 볼트 폴더(데일리 노트 YYMMDD 요일.md + 일정 파일)를 감시하다가 변경되면 SSE 로 창에 푸시
-- 개인 볼트 /api/* : 같은 PC(나)에서 온 요청만 (남에게 공유하지 않음)
-- 팀 볼트 /api/team/* : 이 PC 가 팀 호스트일 때 팀원(토큰)에게 공개, 팀원 모두 편집
+- 스페이스 폴더(데일리 노트 YYMMDD 요일.md + 일정 파일)를 감시하다가 변경되면 SSE 로 창에 푸시
+- 개인 스페이스 /api/* : 같은 PC(나)에서 온 요청만 (남에게 공유하지 않음)
+- 팀 스페이스 /api/team/* : 이 PC 가 팀 호스트일 때 팀원(토큰)에게 공개, 팀원 모두 편집
 """
 import datetime as dt
 import json
@@ -301,7 +301,7 @@ def publish(store, hub):
 
 # ---------------------------------------------------------------- clients / SSE
 class Hub:
-    """SSE 구독자 관리 (개인 볼트 창 / 팀 볼트 팀원)"""
+    """SSE 구독자 관리 (개인 스페이스 창 / 팀 스페이스 팀원)"""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -420,11 +420,11 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, TypeError, AttributeError):
             self._send_json({"error": "bad request"}, 400)
 
-    # ------------------------------------------------------------ 개인 볼트 (이 PC 에서만)
+    # ------------------------------------------------------------ 개인 스페이스 (이 PC 에서만)
     def _personal(self, method, path, qs, ctx):
         share = self.share
         if not ctx.owner:
-            return self._send_json({"error": "private", "message": "개인 볼트는 공유하지 않습니다."}, 403)
+            return self._send_json({"error": "private", "message": "개인 스페이스는 공유하지 않습니다."}, 403)
         if path == "/info":
             return self._send_json({"app": "dogani", "name": share.name, "pc": share.pc_name,
                                     "today": dt.date.today().isoformat(), "kind": "personal",
@@ -433,7 +433,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._stream(share.hub, ctx)
         self._space(method, path, qs, share.store, share.hub, writable=True)
 
-    # ------------------------------------------------------------ 팀 공간
+    # ------------------------------------------------------------ 팀 스페이스
     def _team(self, method, path, qs, ctx):
         team = self.share.team
         if not team:
@@ -465,7 +465,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._stream(team.hub, ctx)
         self._space(method, path, qs, team.store, team.hub, writable=True)
 
-    # ------------------------------------------------------------ 노트 공간 공통 (개인·팀)
+    # ------------------------------------------------------------ 스페이스 공통 (개인·팀)
     def _space(self, method, path, qs, store, hub, writable):
         if method == "POST":
             if not writable:
@@ -542,12 +542,12 @@ def local_ip():
 
 
 class ShareServer:
-    """HTTP 서버 + 폴더 감시 (개인 볼트 + 팀 호스트면 팀 볼트). start() 가 포트를 못 열면 OSError."""
+    """HTTP 서버 + 폴더 감시 (개인 스페이스 + 팀 호스트면 팀 스페이스). start() 가 포트를 못 열면 OSError."""
 
-    def __init__(self, port, vault_dir, name=""):
+    def __init__(self, port, space_dir, name=""):
         self.port = port
         self.store = NoteStore()
-        self.store.set_root(vault_dir)
+        self.store.set_root(space_dir)
         self.hub = Hub()
         self.ip = local_ip()
         self.pc_name = socket.gethostname()
@@ -561,7 +561,7 @@ class ShareServer:
         return f"{self.ip}:{self.port}"
 
     def is_owner(self, ip):
-        """같은 PC 에서 온 요청 = 나 (개인 볼트는 나만)."""
+        """같은 PC 에서 온 요청 = 나 (개인 스페이스는 나만)."""
         return ip in ("127.0.0.1", "::1", self.ip)
 
     def start(self):
