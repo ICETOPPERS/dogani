@@ -56,13 +56,15 @@ def make_token(sign_key_hex, mid, iat=None):
 
 HELLO_PREFIX = b"dogani-hello:"   # 호스트 확인 서명 (토큰 서명 메시지 "id.iat" 와 섞이지 않게 접두어)
 NONCE_LEN = 32                     # hex 글자 수 (16바이트)
+PROVE_LIMIT, PROVE_WINDOW = 20, 10  # 호스트 확인 서명은 10초에 20번까지 (팀원은 호스트를 놓쳤을 때만 부름)
 
 
 def verify_hello(pub_hex, nonce, sig_hex):
     """호스트가 nonce 에 서명한 값이 그 팀의 공개키로 맞는지 (토큰을 보내기 전 '진짜 우리 호스트' 확인)"""
     try:
-        return ed25519.verify(bytes.fromhex(pub_hex), HELLO_PREFIX + nonce.encode(), bytes.fromhex(sig_hex))
-    except (ValueError, TypeError, AttributeError):
+        return bool(pub_hex) and ed25519.verify(bytes.fromhex(pub_hex), HELLO_PREFIX + nonce.encode(),
+                                                bytes.fromhex(str(sig_hex or "")))
+    except Exception:   # 상대가 보낸 값이 무엇이든 '확인 안 됨'으로 (작업 스레드가 죽지 않게)
         return False
 
 
@@ -125,6 +127,7 @@ class TeamHost:
             self._save()
         self.pub = public_key(self.data["sign_key"])
         self.fails = {}   # ip -> [횟수, 잠금 해제 시각]
+        self.proofs = []  # 최근 호스트 확인 서명 시각 (prove 횟수 제한)
         if not any(f.endswith("일정.md") for f in os.listdir(root)):
             with open(os.path.join(root, "일정.md"), "w", encoding="utf-8") as f:
                 f.write(SCHEDULE_SEED)
@@ -219,6 +222,12 @@ class TeamHost:
         nonce = str(nonce or "")
         if len(nonce) != NONCE_LEN or any(c not in "0123456789abcdef" for c in nonce):
             return ""
+        now = time.time()
+        with self.lock:   # 인증 전 요청이라 서명(파이썬 연산) 횟수 제한: 아무나 반복 호출로 CPU 를 태우지 못하게
+            self.proofs = [t for t in self.proofs if now - t < PROVE_WINDOW]
+            if len(self.proofs) >= PROVE_LIMIT:
+                return ""
+            self.proofs.append(now)
         return ed25519.sign(bytes.fromhex(self.data["sign_key"]), HELLO_PREFIX + nonce.encode()).hex()
 
     def _limit(self, ip):

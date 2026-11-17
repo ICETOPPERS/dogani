@@ -491,7 +491,7 @@
       if (!items.length) continue;
       if (title) html += `<div class="sm-title">${title}</div>`;
       for (const s of items) {
-        html +=`<button class="sm-item${s.key === cur ? " active" : ""}" data-key="${esc(s.key)}"${s.disabled ? " disabled" : ""}>` +
+        html += `<button class="sm-item${s.key === cur ? " active" : ""}" data-key="${esc(s.key)}"${s.disabled ? " disabled" : ""}>` +
           `<span class="sm-name">${esc(s.name)}</span>` +
           (s.sub ? `<span class="sm-sub">${esc(s.sub)}</span>` : "") +
           `<span class="dot ${esc(s.status)}"></span></button>`;

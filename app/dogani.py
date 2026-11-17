@@ -204,13 +204,20 @@ def http_json(server, path, body=None, token="", name="", timeout=4):
         req.add_header(TOKEN_HEADER, token)
     if name:
         req.add_header(USER_HEADER, quote(name))
+    def parse(raw):   # 객체가 아닌 JSON·깨진 응답은 빈 dict (호출하는 쪽이 .get 을 그냥 씀)
+        try:
+            res = json.loads(raw or b"{}")
+        except ValueError:
+            return {}
+        return res if isinstance(res, dict) else {}
+
     try:
         with _opener.open(req, timeout=timeout) as r:
-            return r.status, json.loads(r.read() or b"{}")
+            return r.status, parse(r.read())
     except urllib.error.HTTPError as e:
         try:
-            return e.code, json.loads(e.read() or b"{}")
-        except ValueError:
+            return e.code, parse(e.read())
+        except OSError:
             return e.code, {}
     except (urllib.error.URLError, OSError, ValueError):
         return 0, {}
@@ -1058,14 +1065,17 @@ class doganiApp(QObject):
         own = self.cfg["team_host"]
 
         def work():
-            status, res = http_json(host, "/api/team/me", token=token, name=name)
-            if status == 0 and pc and not own:
-                alt = find_host(pc, host, pub)   # 서명으로 같은 팀 호스트임을 확인한 주소에만 토큰을 보냄
-                if alt:
-                    status, res = http_json(alt, "/api/team/me", token=token, name=name)
-                    if status == 200:
-                        res = {**res, "_host": alt, "_token": token}
-            self.team_result.emit(status, res)
+            status, res = 0, {}
+            try:
+                status, res = http_json(host, "/api/team/me", token=token, name=name)
+                if status == 0 and pc and not own:
+                    alt = find_host(pc, host, pub)   # 서명으로 같은 팀 호스트임을 확인한 주소에만 토큰을 보냄
+                    if alt:
+                        s2, r2 = http_json(alt, "/api/team/me", token=token, name=name)
+                        if s2 == 200:   # 아니면 원래 결과(연결 안 됨) 그대로
+                            status, res = 200, {**r2, "_host": alt}
+            finally:   # 무슨 일이 있어도 결과를 보냄 (안 그러면 team_polling 이 안 풀려 다시 확인을 안 함)
+                self.team_result.emit(status, {**res, "_polled": (host, token)})
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1074,9 +1084,15 @@ class doganiApp(QObject):
         t = self.cfg["team"]
         if not t.get("token"):
             return
+        if res.get("_polled") != (t["host"], t["token"]):
+            return self.poll_team()   # 확인하는 사이 주소를 바꿨거나 다시 참여함 → 지난 결과는 버리고 다시
+        self.apply_team_result(status, res)
+
+    def apply_team_result(self, status, res):
+        t = self.cfg["team"]
         prev = self.team_status
         if status == 200:
-            if res.get("_host") and res.get("_token") == t["token"]:   # PC 이름으로 바뀐 IP 를 찾음
+            if res.get("_host"):   # PC 이름으로 바뀐 IP 를 찾음
                 t["host"] = res["_host"]
                 self.tray.notify(f"팀 호스트의 주소가 바뀌어 {t['host']} 로 다시 연결했습니다.")
             t["pc"] = res.get("pc") or t.get("pc", "")
@@ -1286,17 +1302,19 @@ class doganiApp(QObject):
             proven, status, res = host_proof(host, pub)
             if status != 200:
                 return status, res, False
-            if pub and not proven:   # 서명이 안 맞음 = 다른 팀 (예전 버전 호스트도 서명이 없어 여기로)
+            if not proven:   # 서명이 안 맞음 = 다른 팀 (예전 버전 호스트도 서명이 없어 여기로). 토큰은 안 보냄
                 return status, res, True
             return *http_json(host, "/api/team/me", token=token, name=name), False
 
         def done(result):
-            status, res, other = result
             if self.cfg["team"].get("token") != token:   # 그 사이 팀을 나갔거나 다시 참여함
                 return
+            if result is None:
+                return QMessageBox.warning(None, APP_NAME, "호스트를 확인하다 오류가 났습니다. 다시 시도하세요.")
+            status, res, other = result
             if other:
-                return QMessageBox.warning(None, APP_NAME, "그 주소는 다른 팀의 호스트입니다. 주소를 확인하세요.\n"
-                                           "(호스트 PC 의 dogani 가 예전 버전이어도 이렇게 보입니다)")
+                return QMessageBox.warning(None, APP_NAME, "그 주소는 우리 팀 호스트로 확인되지 않습니다.\n"
+                                           "다른 팀의 호스트이거나, 호스트 PC 의 dogani 가 예전 버전입니다.")
             if status == 401:
                 return QMessageBox.warning(None, APP_NAME, "그 호스트가 이 PC 를 팀원으로 인정하지 않습니다.\n"
                                            "내보내진 상태입니다. 초대장으로 다시 참여하세요.")
@@ -1304,14 +1322,22 @@ class doganiApp(QObject):
                 return QMessageBox.warning(None, APP_NAME, self.team_request_result(host, status, res)[1])
             self.cfg["team"]["host"] = host
             save_config(self.cfg)
-            self.on_team_result(status, res)
+            # team_polling 은 건드리지 않음: 옛 주소로 확인 중이던 결과는 on_team_result 가 버리고 새 주소로 다시 확인
+            self.apply_team_result(status, res)
             self.tray.notify(f"호스트 주소를 {host} 로 바꿨습니다.")
 
         self.run_bg(work, done)
 
     def run_bg(self, work, done):
-        """work() 는 작업 스레드에서, 그 결과로 done(결과) 는 Qt 메인 스레드에서 실행"""
-        threading.Thread(target=lambda: self.bg_result.emit((done, work())), daemon=True).start()
+        """work() 는 작업 스레드에서, 그 결과로 done(결과) 는 Qt 메인 스레드에서 실행. work 가 예외면 done(None)"""
+        def run():
+            try:
+                result = work()
+            except Exception:
+                result = None
+            self.bg_result.emit((done, result))
+
+        threading.Thread(target=run, daemon=True).start()
 
     def on_bg_result(self, payload):
         done, result = payload
