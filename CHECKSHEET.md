@@ -1,6 +1,6 @@
 # CHECKSHEET.md
 
-> v26.11.17.03 태그 시점에 완료된 내역은 [CHANGELOG.md](CHANGELOG.md)로, 판단 사항은 [SPEC.md](SPEC.md) 8절(한계)·9절(설계 결정)로 옮기고 지움. 아래는 남은 항목.
+> v26.11.18.02 태그 시점에 완료된 내역은 [CHANGELOG.md](CHANGELOG.md)로, 판단 사항은 [SPEC.md](SPEC.md) 8절(한계)·9절(설계 결정)로 옮기고 지움. 아래는 남은 항목.
 
 ## 작업 내역 (미커밋)
 
