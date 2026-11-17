@@ -285,7 +285,8 @@
       }
       p.editor.setReadOnly(!state.writable);
       o.body.classList.add("has-editor");
-      o.body.replaceChildren(host);
+      // 이미 붙어 있으면 다시 붙이지 않음 (뗐다 붙이면 스크롤이 맨 위로)
+      if (host.parentNode !== o.body || o.body.childNodes.length !== 1) o.body.replaceChildren(host);
     }
 
     p.message = (html) => {
