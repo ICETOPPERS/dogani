@@ -427,8 +427,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"error": "private", "message": "개인 스페이스는 공유하지 않습니다."}, 403)
         if path == "/info":
             return self._send_json({"app": "dogani", "name": share.name, "pc": share.pc_name,
-                                    "today": dt.date.today().isoformat(), "kind": "personal",
-                                    "paused": False, "writable": True})
+                                    "today": dt.date.today().isoformat(), "kind": "personal", "writable": True})
         if path == "/events":
             return self._stream(share.hub, ctx)
         self._space(method, path, qs, share.store, share.hub, writable=True)
@@ -443,8 +442,11 @@ class Handler(BaseHTTPRequestHandler):
             res = team.join(ctx.ip, body.get("code"), body.get("name"))
             res.update(pub=team.pub, team=team.name)
             return self._send_json(res)
-        if path == "/hello":   # 참여 전에 주소가 맞는지 확인용
-            return self._send_json({"app": "dogani", "team": team.name, "host": self.share.name})
+        if path == "/hello":
+            # 토큰 없이 받는 호스트 확인: nonce 에 서명해 줌 → 팀원은 공개키로 확인한 뒤에만 토큰을 보냄
+            # (PC 이름으로 바뀐 IP 를 찾을 때 이름을 가로챈 PC 에 토큰을 넘기지 않게)
+            return self._send_json({"app": "dogani", "team": team.name, "host": self.share.name, "pub": team.pub,
+                                    "sig": team.prove(qs.get("nonce", [""])[0])})
         mid = ctx.member[0] if ctx.member else (team.owner_id if ctx.owner else None)
         if not mid:
             return self._send_json({"error": "not_member", "message": "팀원만 볼 수 있습니다."}, 401)
@@ -462,7 +464,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"name": name})
         writable = team.can_write(mid)
         if path == "/info":
-            return self._send_json({"app": "dogani", "name": team.name, "kind": "team", "paused": False,
+            return self._send_json({"app": "dogani", "name": team.name, "kind": "team",
                                     "writable": writable, "today": dt.date.today().isoformat()})
         if path == "/events":
             return self._stream(team.hub, ctx)
@@ -522,8 +524,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         q = hub.subscribe(ctx.ip)
         try:
-            hello = json.dumps({"paused": False})
-            self.wfile.write(f"retry: 3000\nevent: hello\ndata: {hello}\n\n".encode("utf-8"))
+            self.wfile.write(b"retry: 3000\nevent: hello\ndata: {}\n\n")
             self.wfile.flush()
             while not self.server.stopping:
                 try:

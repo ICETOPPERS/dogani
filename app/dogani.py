@@ -10,6 +10,7 @@ import argparse
 import ctypes
 import json
 import os
+import secrets
 import socket
 import sys
 import threading
@@ -35,7 +36,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDia
 import liveupdate
 import space
 from server import CLIENT_KEY, HOST_HEADER, KEY_HEADER, TOKEN_HEADER, USER_HEADER, ShareServer
-from team import NAME_MAX, TeamError, TeamHost, clean_name
+from team import TeamError, TeamHost, clean_name, verify_hello
 
 APP_NAME = "dogani"
 CONFIG_DIR = os.environ.get("DOGANI_HOME") or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "dogani")
@@ -74,17 +75,9 @@ DEFAULT_CONFIG = {
 
 
 # ---------------------------------------------------------------- config
-def load_json(path):
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
-
-
 def load_config():
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    saved = load_json(CONFIG_PATH)
+    saved = space.read_json(CONFIG_PATH)
     if saved is None:
         saved = migrate_old_config()
     cfg.update(saved)
@@ -132,9 +125,9 @@ def migrate_windows(cfg):
 def migrate_old_config():
     """v26.11.04.01 이전(서버/클라이언트 분리) 설정을 가져온다."""
     cfg = {}
-    old_server = load_json(os.path.join(CONFIG_DIR, "server.json")) or {}
-    old_client = load_json(os.path.join(CONFIG_DIR, "client.json")) or {}
-    old_owner = load_json(os.path.join(CONFIG_DIR, "owner.json")) or {}
+    old_server = space.read_json(os.path.join(CONFIG_DIR, "server.json")) or {}
+    old_client = space.read_json(os.path.join(CONFIG_DIR, "client.json")) or {}
+    old_owner = space.read_json(os.path.join(CONFIG_DIR, "owner.json")) or {}
     for k in ("port", "todo_dir", "paused", "blocked"):
         if k in old_server:
             cfg[k] = old_server[k]
@@ -175,8 +168,16 @@ def normalize_server(text):
 
 
 # ---------------------------------------------------------------- http (팀 호스트와 통신)
-def find_host(pc, host, pub, token, name):
-    """호스트 IP 가 바뀌었을 때: PC 이름으로 새 IP 를 찾아(같은 망) 같은 팀(공개키 일치)이면 → (새 주소, 응답)"""
+def host_proof(addr, pub):
+    """토큰 없이 addr 이 공개키 pub 의 팀 호스트인지 확인 (호스트가 nonce 에 서명) → (확인됨, HTTP 상태, 응답)
+    공개키는 누구나 되돌려 줄 수 있으므로 pub 비교가 아니라 서명으로 확인한다"""
+    nonce = secrets.token_hex(16)
+    status, res = http_json(addr, f"/api/team/hello?nonce={nonce}")
+    return status == 200 and bool(pub) and verify_hello(pub, nonce, res.get("sig", "")), status, res
+
+
+def find_host(pc, host, pub):
+    """호스트 IP 가 바뀌었을 때: PC 이름으로 새 IP 를 찾아(같은 망) 같은 팀 호스트(서명 확인)면 → 새 주소, 없으면 None"""
     port = host.rsplit(":", 1)[-1]
     try:
         ips = {a[4][0] for a in socket.getaddrinfo(pc, None, socket.AF_INET)}
@@ -184,11 +185,8 @@ def find_host(pc, host, pub, token, name):
         return None
     for ip in ips:
         alt = f"{ip}:{port}"
-        if alt == host:
-            continue
-        status, res = http_json(alt, "/api/team/me", token=token, name=name)
-        if status == 200 and pub and res.get("pub") == pub:
-            return alt, res
+        if alt != host and host_proof(alt, pub)[0]:
+            return alt
     return None
 
 
@@ -552,10 +550,6 @@ class Bridge(QObject):
     def setStatus(self, key, status):
         if status in ("online", "offline", "blocked"):
             self.win.app.on_status(key, status)
-
-    @Slot(str, str)
-    def setName(self, key, name):
-        self.win.app.on_peer_name(key, name)
 
     @Slot(str)
     def togglePanel(self, mode):
@@ -931,6 +925,7 @@ def screen_key(screen):
 
 class doganiApp(QObject):
     team_result = Signal(int, object)   # 팀 호스트 응답 (작업 스레드 → 메인 스레드)
+    bg_result = Signal(object)          # run_bg 결과 (done, 결과)
 
     def __init__(self, qapp, cfg):
         super().__init__()
@@ -965,6 +960,7 @@ class doganiApp(QObject):
         self.tray.command.connect(self.on_command)
         liveupdate.install(self)
         self.team_result.connect(self.on_team_result)
+        self.bg_result.connect(self.on_bg_result)
         self.team_timer = QTimer(self, interval=TEAM_POLL_MS, timeout=self.poll_team)
 
     def save_later(self):
@@ -1048,9 +1044,6 @@ class doganiApp(QObject):
         for win in self.panels.values():
             win.push_config(calHidden=self.cfg["cal_hidden"])
 
-    def on_peer_name(self, key, name):
-        pass   # 예전 '주소로 추가한 노트' 이름 표시용 (지금은 쓰지 않음)
-
     # ------------------------------------------------------------ team (client)
     def apply_team_auth(self):
         if self.share:
@@ -1067,9 +1060,11 @@ class doganiApp(QObject):
         def work():
             status, res = http_json(host, "/api/team/me", token=token, name=name)
             if status == 0 and pc and not own:
-                found = find_host(pc, host, pub, token, name)
-                if found:
-                    status, res = 200, {**found[1], "_host": found[0], "_token": token}
+                alt = find_host(pc, host, pub)   # 서명으로 같은 팀 호스트임을 확인한 주소에만 토큰을 보냄
+                if alt:
+                    status, res = http_json(alt, "/api/team/me", token=token, name=name)
+                    if status == 200:
+                        res = {**res, "_host": alt, "_token": token}
             self.team_result.emit(status, res)
 
         threading.Thread(target=work, daemon=True).start()
@@ -1285,18 +1280,42 @@ class doganiApp(QObject):
         host = normalize_server(text) if ok else ""
         if not host or host == t["host"]:
             return
-        status, res = http_json(host, "/api/team/me", token=t["token"], name=self.cfg["name"])
-        if status == 401:
-            return QMessageBox.warning(None, APP_NAME, "그 호스트가 이 PC 를 팀원으로 인정하지 않습니다.\n"
-                                       "다른 팀이거나 내보내진 상태입니다. 초대장으로 다시 참여하세요.")
-        if status != 200:
-            return QMessageBox.warning(None, APP_NAME, self.team_request_result(host, status, res)[1])
-        if t.get("pub") and res.get("pub") != t["pub"]:
-            return QMessageBox.warning(None, APP_NAME, "그 주소는 다른 팀의 호스트입니다. 주소를 확인하세요.")
-        t["host"] = host
-        save_config(self.cfg)
-        self.on_team_result(status, res)
-        self.tray.notify(f"호스트 주소를 {host} 로 바꿨습니다.")
+        token, pub, name = t["token"], t.get("pub", ""), self.cfg["name"]
+
+        def work():   # 주소가 틀리면 몇 초 걸리므로 작업 스레드에서 (트레이·창이 멈추지 않게)
+            proven, status, res = host_proof(host, pub)
+            if status != 200:
+                return status, res, False
+            if pub and not proven:   # 서명이 안 맞음 = 다른 팀 (예전 버전 호스트도 서명이 없어 여기로)
+                return status, res, True
+            return *http_json(host, "/api/team/me", token=token, name=name), False
+
+        def done(result):
+            status, res, other = result
+            if self.cfg["team"].get("token") != token:   # 그 사이 팀을 나갔거나 다시 참여함
+                return
+            if other:
+                return QMessageBox.warning(None, APP_NAME, "그 주소는 다른 팀의 호스트입니다. 주소를 확인하세요.\n"
+                                           "(호스트 PC 의 dogani 가 예전 버전이어도 이렇게 보입니다)")
+            if status == 401:
+                return QMessageBox.warning(None, APP_NAME, "그 호스트가 이 PC 를 팀원으로 인정하지 않습니다.\n"
+                                           "내보내진 상태입니다. 초대장으로 다시 참여하세요.")
+            if status != 200:
+                return QMessageBox.warning(None, APP_NAME, self.team_request_result(host, status, res)[1])
+            self.cfg["team"]["host"] = host
+            save_config(self.cfg)
+            self.on_team_result(status, res)
+            self.tray.notify(f"호스트 주소를 {host} 로 바꿨습니다.")
+
+        self.run_bg(work, done)
+
+    def run_bg(self, work, done):
+        """work() 는 작업 스레드에서, 그 결과로 done(결과) 는 Qt 메인 스레드에서 실행"""
+        threading.Thread(target=lambda: self.bg_result.emit((done, work())), daemon=True).start()
+
+    def on_bg_result(self, payload):
+        done, result = payload
+        done(result)
 
     # ------------------------------------------------------------ windows
     def open_panels(self):

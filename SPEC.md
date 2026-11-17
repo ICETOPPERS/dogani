@@ -94,13 +94,13 @@
 
 | 경로 | 메서드 | 설명 |
 |---|---|---|
-| `/api/info` | GET | `{app, name, pc, today, kind:"personal", paused:false, writable:true}` |
+| `/api/info` | GET | `{app, name, pc, today, kind:"personal", writable:true}` |
 | `/api/events` | GET | SSE: `changed{dates}`, `schedule`, `reload`(스페이스 바뀜) |
 | `/api/note?date=` | GET/POST | 노트 원문·개수 / `{date, content, base_mtime}` 저장 (mtime 다르면 409) |
 | `/api/month?ym=` | GET | 날짜별 완료/전체 |
 | `/api/schedule` | GET | 파싱된 일정 목록 |
 | `/api/sched-doc` | GET/POST | 일정 파일 원문 / 저장 |
-| `/api/team/hello` | GET | 호스트 확인 (인증 전) |
+| `/api/team/hello?nonce=` | GET | 호스트 확인 (인증 전, 토큰 안 보냄) → `{app, team, host, pub, sig}`. `sig` = 서명 키로 `"dogani-hello:" + nonce`(hex 32자) 에 Ed25519 서명, nonce 형식이 틀리면 빈 값 |
 | `/api/team/join` | POST | `{code, name}` → 토큰·공개키(`pub`). `name` = 그 PC 의 '내 이름'(설정 `name`, 처음엔 PC 호스트명). 다시 초대면 `name` 무시하고 팀에 있던 이름 유지(새 PC 의 '내 이름'이 그걸로 바뀜). 새 팀원 이름이 겹치면 409 `name_taken`, 초대장은 남고 참여 창이 다른 이름을 물어 다시 시도. 초대장은 성공 시 폐기 (5회 실패 시 IP 1분 잠금) |
 | `/api/team/me` | GET | 팀원 신호(20초 주기, 75초 안 = 접속 중) + 팀원 목록·공개키 + `pc`(호스트 PC 이름) |
 | `/api/team/profile` | POST | 이름 변경 |
@@ -114,8 +114,9 @@
 - 다시 초대(PC 바꿈) = 그 팀원 id 에 묶인 초대장. 쓰는 순간 그 사람의 다른 초대장 삭제 + `min_iat` = 지금+1초, 새 토큰 발급시각 = `min_iat` → 예전 PC 토큰 무효. 새로 다시 초대하면 이전 다시 초대 초대장은 폐기. 이름·PIN 로그인은 없음
 - 토큰: `팀원ID.발급시각.Ed25519서명(hex)`. 호스트가 개인키로 서명·검증 (팀원 PC 는 검증 안 함)
 - 내보내기 = 목록에서 삭제, 다시 초대로 참여 = `min_iat` 올림 → 바로 반영. 내보내면 그 사람 초대장도 삭제. 남은 팀원 토큰은 그대로 유효(키 교체 없음)
-- 팀원 트레이 `호스트 주소 바꾸기`: 호스트 IP 가 바뀌었을 때 주소만 바꿈(토큰 유지). 새 주소의 `/api/team/me` 가 200 이고 `pub` 가 저장된 공개키와 같을 때만 저장
-- 호스트 재탐색: 팀원은 `/me` 의 `pc` 를 설정 `team.pc` 에 저장. 20초 확인이 연결 실패면 그 PC 이름을 윈도우 이름 찾기(IPv4)로 풀어 같은 포트의 `/api/team/me` 를 시도, 200 + 공개키 일치면 `team.host` 교체·알림. 같은 망에서만 됨, UDP 탐색 없음
+- 호스트 확인(`host_proof`): 새 주소에 토큰을 보내기 **전에** 무작위 nonce 로 `/api/team/hello` 를 불러 `sig` 를 저장된 공개키(`team.pub`)로 검증. 공개키 자체는 누구나 되돌려 줄 수 있으므로 비교가 아니라 서명으로 확인 (PC 이름을 가로챈 PC 에 토큰이 가지 않게)
+- 팀원 트레이 `호스트 주소 바꾸기`: 호스트 IP 가 바뀌었을 때 주소만 바꿈(토큰 유지). 작업 스레드에서 호스트 확인 → 통과하면 `/api/team/me` 200 일 때 저장. 서명이 안 맞으면 다른 팀(예전 버전 호스트도 같음)으로 안내
+- 호스트 재탐색: 팀원은 `/me` 의 `pc` 를 설정 `team.pc` 에 저장. 20초 확인이 연결 실패면 그 PC 이름을 윈도우 이름 찾기(IPv4)로 풀어 같은 포트에 호스트 확인 → 통과한 주소에만 `/api/team/me`(토큰) 를 보내 200 이면 `team.host` 교체·알림. 같은 망에서만 됨, UDP 탐색 없음
 - 호스트 옮기기 = 팀스페이스 폴더 + 키 파일(3.5) 복사. 키 파일 없이 스페이스만 옮기면 새 키 → 팀원 모두 다시 참여
 - 예전 HMAC `secret` 은 로드 시 삭제 → 예전 토큰 전부 무효, 팀원은 초대장으로 1회 다시 참여
 - 업데이트: GitHub `nodogani/dogani` 의 태그 zip(HTTPS)만 받음. 서명 확인 없음 (저장소 쓰기 권한 = 배포 권한)

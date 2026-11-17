@@ -18,7 +18,6 @@
 """
 import datetime as dt
 import difflib
-import json
 import os
 import secrets
 import threading
@@ -53,6 +52,18 @@ def public_key(sign_key_hex):
 def make_token(sign_key_hex, mid, iat=None):
     iat = int(iat if iat is not None else time.time())
     return f"{mid}.{iat}.{ed25519.sign(bytes.fromhex(sign_key_hex), f'{mid}.{iat}'.encode()).hex()}"
+
+
+HELLO_PREFIX = b"dogani-hello:"   # 호스트 확인 서명 (토큰 서명 메시지 "id.iat" 와 섞이지 않게 접두어)
+NONCE_LEN = 32                     # hex 글자 수 (16바이트)
+
+
+def verify_hello(pub_hex, nonce, sig_hex):
+    """호스트가 nonce 에 서명한 값이 그 팀의 공개키로 맞는지 (토큰을 보내기 전 '진짜 우리 호스트' 확인)"""
+    try:
+        return ed25519.verify(bytes.fromhex(pub_hex), HELLO_PREFIX + nonce.encode(), bytes.fromhex(sig_hex))
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 def _shape_ok(token, members=None):
@@ -123,17 +134,12 @@ class TeamHost:
         self.store.pop_changes()   # 처음 읽은 것은 알릴 필요 없음
         self.hub = Hub()
         self.authors_path = os.path.join(space.meta_dir(root), "authors.json")
-        self.authors = self._read_authors()
+        self.authors = space.read_json(self.authors_path) or {}
         self.owner_id = self._ensure_owner(owner_name)
 
     # -- storage
     def _load(self, legacy_dir):
-        def read(path):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    return json.load(f)
-            except (OSError, ValueError):
-                return None
+        read = space.read_json
         team, keys = read(self.path), read(self.key_path)
         data = {**(team or {}), **(keys or {})}
         legacy = os.path.join(legacy_dir, "team.json") if legacy_dir else ""
@@ -207,6 +213,13 @@ class TeamHost:
 
     def owner_token(self):
         return make_token(self.data["sign_key"], self.owner_id)
+
+    def prove(self, nonce):
+        """팀원이 보낸 nonce 에 서명 → 팀원은 토큰을 보내기 전에 공개키로 이 PC 가 진짜 호스트인지 확인 (verify_hello)"""
+        nonce = str(nonce or "")
+        if len(nonce) != NONCE_LEN or any(c not in "0123456789abcdef" for c in nonce):
+            return ""
+        return ed25519.sign(bytes.fromhex(self.data["sign_key"]), HELLO_PREFIX + nonce.encode()).hex()
 
     def _limit(self, ip):
         f = self.fails.get(ip)
@@ -379,14 +392,6 @@ class TeamHost:
         self.hub.broadcast("schedule", {})   # 팀원 화면이 /schedule 을 다시 받으며 쓰기 가능 여부를 갱신
 
     # -- 일정 작성자 (.dogani/authors.json: {줄 원문(앞뒤 공백 제거): {by, at, mod, mod_at}})
-    def _read_authors(self):
-        try:
-            with open(self.authors_path, encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else {}
-        except (OSError, ValueError):
-            return {}
-
     def record_sched(self, old, new, mid):
         """일정 파일 저장 전후 원문을 비교해 바뀐 줄의 작성자·수정자를 기록. 바뀐 줄 = 수정, 새 줄 = 작성.
         글자가 그대로인 줄은 위치가 바뀌어도 기록 유지. 이 파일에서 사라진 줄만 지움 (다른 일정 파일 기록은 그대로)"""
