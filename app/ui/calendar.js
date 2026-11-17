@@ -72,6 +72,7 @@
       `${range}${ev.time ? " " + timeText(ev) : ""}${ev.uncertain ? " (정확한 시각 미정)" : ""}`,
       ev.place && `장소: ${ev.place}`,
       ev.tags && ev.tags.length && ev.tags.map((t) => "#" + t).join(" "),
+      ev.members && ev.members.length && "멤버: " + ev.members.join(", "),
       ev.memo && `메모: ${ev.memo}`,
       ev.who && whoText(ev.who),
     ].filter(Boolean).join("\n");
@@ -96,7 +97,7 @@
     if (ev.holiday) cls.push("holiday");
     if (ev.uncertain) cls.push("unsure");
     const time = ev.time ? `<span class="ev-time">${esc(timeText(ev))}</span>` : "";
-    const place = ev.place ? `<span class="ev-place">@${esc(ev.place)}</span>` : "";
+    const place = ev.place ? `<span class="ev-place">· ${esc(ev.place)}</span>` : "";
     return `<span ${evAttrs(ev, cls)}>${time}${flag(ev)}${esc(ev.title)}${place}</span>`;
   }
 

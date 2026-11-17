@@ -31,6 +31,8 @@
     es: null,
     retryTimer: null,
     writable: false,
+    myName: "",        // 설정의 내 이름 (멤버 칩의 "나")
+    teamNames: [],     // 팀스페이스 팀원 이름 (/schedule 의 members, 멤버 칩 후보)
     calHidden: new Set(), // 달력·할일 일정에서 숨긴 스페이스 키 (설정 cal_hidden, 창끼리 같이 씀)
     evBySpace: {},     // 스페이스 키 → /schedule 일정 목록
     roSpaces: new Set(), // 읽기만 허용된 스페이스 키 (팀 관리자가 편집 허용을 끔. /schedule 의 writable)
@@ -140,6 +142,7 @@
     try {
       const res = await api("/schedule", undefined, spBase(sp));
       state.evBySpace[sp.key] = res.events || [];
+      if (res.members) state.teamNames = res.members;
       const ro = res.writable === false;
       if (ro !== state.roSpaces.has(sp.key)) {
         if (ro) state.roSpaces.add(sp.key); else state.roSpaces.delete(sp.key);
@@ -180,7 +183,7 @@
     }
     list.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
     state.schedAll = list;   // 태그로 거르기 전 (태그 필터 목록을 만들 때 씀)
-    state.sched = CAL.index(list.filter(tagShown));
+    state.sched = CAL.index(list.filter((ev) => tagShown(ev) && memberShown(ev)));
     if (state.mode === "cal" && state.calView === "month") renderMonth();
     if (state.mode === "note") renderSchedRow();
   }
@@ -202,16 +205,42 @@
     const tags = ev.tags || [];
     return tags.length ? tags.some((t) => !state.calHidden.has("#" + t)) : !state.calHidden.has(NO_TAG);
   }
-  /** 그 달에 걸친 일정의 태그 (가나다순) */
-  function tagsOfMonth(ym) {
+  /** 그 달에 걸친 일정의 태그(field = tags) 또는 멤버(members) (가나다순) */
+  function tagsOfMonth(ym, field = "tags") {
     const s = ym + "-01", e = ym + "-31", set = new Set();
-    for (const ev of state.schedAll || []) if (ev.start <= e && ev.end >= s) for (const t of ev.tags || []) set.add(t);
+    for (const ev of state.schedAll || []) if (ev.start <= e && ev.end >= s) for (const t of ev[field] || []) set.add(t);
     return [...set].sort((a, b) => a.localeCompare(b, "ko"));
   }
   /** 화면에 보이는 달의 태그. 하나도 없으면(월초 등) 지난달 태그 */
-  function shownTags() {
-    const tags = tagsOfMonth(state.calYM);
-    return tags.length ? tags : tagsOfMonth(addMonths(state.calYM, -1));
+  function shownTags(field = "tags") {
+    const tags = tagsOfMonth(state.calYM, field);
+    return tags.length ? tags : tagsOfMonth(addMonths(state.calYM, -1), field);
+  }
+
+  // ------------------------------------------------------------ 멤버 필터 (일정 줄의 @이름. 숨긴 멤버 = calHidden 안의 "@이름", "@" = 멤버 없는 일정)
+  // 이름 글자로만 맞춤 (팀원 id 와 묶지 않음): 같은 이름 = 같은 사람, 팀원 아닌 이름도 됨
+  const NO_MEMBER = "@";
+  const cleanName = (v) => String(v || "").replace(/[@#,，\s]/g, "");
+  function memberShown(ev) {
+    const ms = ev.members || [];
+    return ms.length ? ms.some((m) => !state.calHidden.has("@" + m)) : !state.calHidden.has(NO_MEMBER);
+  }
+  /** 고를 수 있는 멤버: 나 → 팀원 → 보이는 달 일정에 적힌 이름 (중복 없이) */
+  function memberPicks() {
+    const out = [];
+    for (const n of [state.myName, ...state.teamNames, ...shownTags("members")]) {
+      const c = cleanName(n);
+      if (c && !out.includes(c)) out.push(c);
+    }
+    return out;
+  }
+  const meMark = (m) => (m === cleanName(state.myName) ? " (나)" : "");
+  function renderMemberFilter() {
+    const box = $("cal-members"), ms = shownTags("members");
+    box.hidden = !ms.length && !state.calHidden.has(NO_MEMBER);
+    box.innerHTML = ms.map((m) => `<label title="@${esc(m)} 일정 보이기"><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
+      `@${esc(m)}${meMark(m)}</label>`).join("") +
+      `<label class="no-tag" title="멤버 없는 일정 보이기"><input type="checkbox" data-mem=""${state.calHidden.has(NO_MEMBER) ? "" : " checked"}>멤버 없는 일정</label>`;
   }
   function renderTagFilter() {
     const box = $("cal-tags"), tags = shownTags();
@@ -466,6 +495,7 @@
     $("cal-grid").innerHTML = r.html;
     CAL.fitCells($("cal-grid"));
     renderTagFilter();
+    renderMemberFilter();
     $("cal-footer").textContent = monthData.failed || `노트 ${r.notes}개 · 완료 ${r.done}/${r.total}`;
   }
 
@@ -567,7 +597,8 @@
     const time = o.t1 ? " " + o.t1 + (o.t2 ? "-" + o.t2 : "") + (o.about ? "?" : "") : "";
     const parts = [mk + date + mk + time, cleanField(o.title)];
     const tags = o.tags.map((t) => t.replace(/[#\s]/g, "")).filter(Boolean).map((t) => "#" + t);
-    if (tags.length) parts.push(tags.join(" "));
+    const ms = [...new Set((o.members || []).map(cleanName).filter(Boolean))].map((m) => "@" + m);
+    if (tags.length || ms.length) parts.push([...tags, ...ms].join(" "));   // 태그 칸: "#근태 @홍길동"
     const place = cleanField(o.place), memo = cleanField(o.memo);
     if (place || memo) parts.push(place);  // 장소 없이 메모만이면 "제목, , 메모"
     if (memo) parts.push(memo);
@@ -580,7 +611,7 @@
       kind: ev.italic ? "span" : "event",
       s: ev.open === "start" ? "" : ev.start, e: ev.open === "end" ? "" : ev.end,
       t1: t1 || "", t2: t2 || "", about: !!ev.uncertain, bold: !!ev.important, off: !!ev.holiday,
-      title: ev.title, tags: ev.tags || [], place: ev.place || "", memo: ev.memo || "",
+      title: ev.title, tags: ev.tags || [], members: ev.members || [], place: ev.place || "", memo: ev.memo || "",
     };
   }
   /** 스페이스 sp 의 일정 파일 고치기: fn(text) → 새 text. 충돌(409) 나면 다시 읽고 한 번 더 */
@@ -659,11 +690,16 @@
           sel.value = t;
         }
         $("ev-add-tags").value = o.tags.join(", ");
+        $("ev-add-members").value = o.members.join(", ");
       }
       // 이 달에 쓴 태그: 눌러서 넣고 빼기
       const picks = shownTags();
       $("ev-add-tagpick").hidden = !picks.length;
       $("ev-add-tagpick").innerHTML = picks.map((t) => `<button type="button" data-tag="${esc(t)}"><i style="background:${tagColor(t)}"></i>${esc(t)}</button>`).join("");
+      // 멤버: 나·팀원·이 달에 쓴 이름. 만든 사람을 자동으로 넣지 않음 (만든 사람 기록은 따로 authors.json)
+      const mp = memberPicks();
+      $("ev-add-mempick").hidden = !mp.length;
+      $("ev-add-mempick").innerHTML = mp.map((m) => `<button type="button" data-tag="${esc(m)}">@${esc(m)}${meMark(m)}</button>`).join("");
       this.markTags();
       if (o) {
         $("ev-add-place").value = o.place;
@@ -689,16 +725,19 @@
       $("ev-add-name").focus();
     },
     close() { $("ev-add").hidden = true; this.ev = null; markRange(null); },
-    inputTags() { return $("ev-add-tags").value.split(/[,，]/).map((t) => t.replace(/[#\s]/g, "")).filter(Boolean); },
-    toggleTag(t) {
-      const tags = this.inputTags(), k = tags.indexOf(t);
+    /** id = "ev-add-tags" | "ev-add-members" (쉼표 구분 입력칸) */
+    inputTags(id = "ev-add-tags") { return $(id).value.split(/[,，]/).map(cleanName).filter(Boolean); },
+    toggleTag(t, id = "ev-add-tags") {
+      const tags = this.inputTags(id), k = tags.indexOf(t);
       if (k < 0) tags.push(t); else tags.splice(k, 1);
-      $("ev-add-tags").value = tags.join(", ");
+      $(id).value = tags.join(", ");
       this.markTags();
     },
     markTags() {
-      const tags = this.inputTags();
-      for (const b of $("ev-add-tagpick").children) b.classList.toggle("on", tags.includes(b.dataset.tag));
+      for (const [id, pick] of [["ev-add-tags", "ev-add-tagpick"], ["ev-add-members", "ev-add-mempick"]]) {
+        const tags = this.inputTags(id);
+        for (const b of $(pick).children) b.classList.toggle("on", tags.includes(b.dataset.tag));
+      }
     },
     setKind(kind) {
       this.kind = kind;
@@ -737,6 +776,7 @@
         t1: $("ev-add-t1").value, t2: $("ev-add-t2").value, about: $("ev-add-about").checked,
         bold: $("ev-add-bold").checked, off: $("ev-add-off").checked,
         title: $("ev-add-name").value, tags: $("ev-add-tags").value.split(/[,，]/),
+        members: $("ev-add-members").value.split(/[,，]/),
         place: $("ev-add-place").value, memo: $("ev-add-memo").value,
       };
     },
@@ -891,13 +931,27 @@
     if (bridge) bridge.setCalHidden(JSON.stringify([...state.calHidden]));
     rebuildSched();
   });
-  function tagHover(tag) {
+  // 멤버 칩: 태그 칩과 같음 (calHidden 에 "@이름")
+  $("cal-members").addEventListener("change", (e) => {
+    const m = e.target.dataset.mem;
+    if (m === undefined) return;
+    const key = "@" + m;
+    if (e.target.checked) state.calHidden.delete(key); else state.calHidden.add(key);
+    if (bridge) bridge.setCalHidden(JSON.stringify([...state.calHidden]));
+    rebuildSched();
+  });
+  $("cal-members").addEventListener("mouseover", (e) => {
+    const inp = e.target.closest("label") && e.target.closest("label").querySelector("input");
+    tagHover(inp && inp.checked && inp.dataset.mem ? inp.dataset.mem : null, "members");
+  });
+  $("cal-members").addEventListener("mouseleave", () => tagHover(null));
+  function tagHover(tag, field = "tags") {
     const grid = $("cal-grid");
     grid.classList.toggle("sp-hover", !!tag);
-    if (tag) grid.style.setProperty("--spc", tagColor(tag));
+    if (tag) grid.style.setProperty("--spc", field === "tags" ? tagColor(tag) : "var(--accent)");
     for (const el of grid.querySelectorAll(".ev[data-k]")) {
       const ev = evOf(el);
-      el.classList.toggle("sp-on", !!(tag && ev && (ev.tags || []).includes(tag)));
+      el.classList.toggle("sp-on", !!(tag && ev && (ev[field] || []).includes(tag)));
     }
   }
   $("cal-tags").addEventListener("mouseover", (e) => {
@@ -909,8 +963,9 @@
   const tagTip = $("ev-tagtip");
   $("cal-grid").addEventListener("mouseover", (e) => {
     const el = e.target.closest(".ev[data-k]"), ev = evOf(el);
-    if (!ev || !(ev.tags || []).length || move) { tagTip.hidden = true; return; }
-    tagTip.innerHTML = ev.tags.map((t) => `<span><i style="background:${tagColor(t)}"></i>${esc(t)}</span>`).join("");
+    if (!ev || !((ev.tags || []).length + (ev.members || []).length) || move) { tagTip.hidden = true; return; }
+    tagTip.innerHTML = (ev.tags || []).map((t) => `<span><i style="background:${tagColor(t)}"></i>${esc(t)}</span>`).join("") +
+      (ev.members || []).map((m) => `<span>@${esc(m)}</span>`).join("");
     tagTip.hidden = false;
     const r = el.getBoundingClientRect(), w = tagTip.offsetWidth, h = tagTip.offsetHeight;
     tagTip.style.left = Math.max(4, Math.min(r.left, innerWidth - w - 4)) + "px";
@@ -919,6 +974,7 @@
   $("cal-grid").addEventListener("mouseleave", () => { tagTip.hidden = true; });
   $("cal-grid").addEventListener("mousedown", () => { tagTip.hidden = true; });
   $("ev-add-tagpick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.toggleTag(b.dataset.tag); });
+  $("ev-add-mempick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.toggleTag(b.dataset.tag, "ev-add-members"); });
   $("ev-add").addEventListener("submit", (e) => { e.preventDefault(); evAdd.submit(); });
   $("ev-add").addEventListener("input", () => { evAdd.update(); evAdd.markTags(); });
   $("ev-add-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.setKind(b.dataset.kind); });
@@ -986,6 +1042,7 @@
       }
       if (cfg.spaces) state.spaces = cfg.spaces;
       if (cfg.calHidden) state.calHidden = new Set(cfg.calHidden);
+      if (cfg.myName !== undefined) state.myName = cfg.myName;
       let moved = false;
       if (cfg.space) {
         moved = !sameSpace(cfg.space, state.space);

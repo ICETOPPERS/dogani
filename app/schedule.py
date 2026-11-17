@@ -13,7 +13,7 @@
   *기울임* = 기간을 화살표(←──→)로 표시
 - "10:00-10:30?" 처럼 시간 끝에 ? = 그 사이 언젠가 (정확한 시각 모름)
 - "-261119" = 시작 미정, 마감만 / "261119-" = 시작만, 끝 미정 (달력에서 페이드로 표시)
-- 태그는 #으로 시작하는 칸(여러 개 가능), 태그가 아닌 칸은 순서대로 장소, 메모 (장소 없이 메모만: "제목, , 메모")
+- 태그는 #으로 시작하는 칸(여러 개 가능), 같은 칸의 @이름 = 멤버 ("#근태 @홍길동", "@홍길동" 만도 됨). 태그가 아닌 칸은 순서대로 장소, 메모 (장소 없이 메모만: "제목, , 메모")
 """
 import datetime as dt
 import re
@@ -94,10 +94,14 @@ def parse_line(line):
         time = ""
     rest = [_MARK_RE.sub("", f).strip() for f in fields[1:]]
     title = rest[0] if rest else ""
-    tags, others = [], []
+    tags, members, others = [], [], []
     for f in rest[1:]:
-        if f.startswith("#"):
-            tags += [t.lstrip("#") for t in f.split() if t.startswith("#") and len(t) > 1]
+        if f[:1] in ("#", "@"):
+            for t in f.split():
+                if len(t) > 1 and t[0] == "#":
+                    tags.append(t[1:])
+                elif len(t) > 1 and t[0] == "@" and t[1:] not in members:
+                    members.append(t[1:])
         else:
             others.append(f)  # 빈 칸도 자리로 셈: "제목, , 메모" = 장소 없이 메모
     while others and not others[-1]:
@@ -110,6 +114,7 @@ def parse_line(line):
         "open": open_,  # "start" = 시작 미정(-261119), "end" = 끝 미정(261119-)
         "title": title,
         "tags": tags,
+        "members": members,  # @이름 (글자 그대로, 팀원 id 와 묶지 않음)
         "place": others[0] if others else "",
         "memo": ", ".join(f for f in others[1:] if f),
         "holiday": holiday,

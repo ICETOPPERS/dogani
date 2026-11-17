@@ -469,7 +469,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/events":
             return self._stream(team.hub, ctx)
         if path == "/schedule" and method == "GET":
-            return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable})
+            return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable,
+                                    "members": [m["name"] for m in team.members()]})   # @멤버 칩 후보
         self._space(method, path, qs, team.store, team.hub, writable=writable,
                     after_sched=lambda old, new: team.record_sched(old, new, mid))
 

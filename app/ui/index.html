@@ -41,6 +41,8 @@
           <div id="cal-spaces" class="cal-spaces" hidden></div>
           <!-- 보이는 달에 쓴 태그 (끄면 그 태그 일정 숨김), 맨 끝 "태그 없는 일정" -->
           <div id="cal-tags" class="cal-spaces cal-tags" hidden></div>
+          <!-- 보이는 달 일정의 @멤버 (끄면 그 멤버 일정 숨김), 맨 끝 "멤버 없는 일정" -->
+          <div id="cal-members" class="cal-spaces cal-tags" hidden></div>
         </div>
         <div id="cal-grid" class="cal-grid"></div>
         <div id="ev-tagtip" class="ev-tagtip" hidden></div>
@@ -70,6 +72,9 @@
             <span class="k k-top">태그</span>
             <div class="v v-tags"><input type="text" id="ev-add-tags" placeholder="쉼표로 구분  예) 과제, 교육">
               <div id="ev-add-tagpick" class="ev-add-tagpick" hidden></div></div>
+            <span class="k k-top" title="일정에 든 사람 (@이름). 만든 사람과 따로">멤버</span>
+            <div class="v v-tags"><input type="text" id="ev-add-members" placeholder="쉼표로 구분  예) 홍길동, 김철수">
+              <div id="ev-add-mempick" class="ev-add-tagpick" hidden></div></div>
             <span class="k">장소</span>
             <div class="v"><input type="text" id="ev-add-place"></div>
             <span class="k" id="ev-add-memo-k" hidden>메모</span>

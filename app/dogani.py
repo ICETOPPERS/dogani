@@ -980,7 +980,7 @@ class doganiApp(QObject):
     def js_common(self):
         # spaces = 달력에 같이 그릴 수 있는 스페이스 전부 (일정 팝업의 스페이스 선택에도 씀)
         return {"theme": self.cfg["theme"], "space": self.current_space(), "spaces": self.spaces(),
-                "calHidden": self.cfg["cal_hidden"]}
+                "calHidden": self.cfg["cal_hidden"], "myName": self.cfg["name"]}
 
     def push_spaces(self):
         common = self.js_common()
