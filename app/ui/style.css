@@ -704,14 +704,25 @@ body.mode-nav #root { gap: 4px; }
 
 /* 스페이스 표시: 일정 앞 색 막대 (스페이스가 둘 이상 보일 때만), 달력 위 스페이스 체크 */
 :root { --sp-me: #8b93a1; }
-.cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px 0; font-size: 11px; }
+.cal-filters { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 4px 8px 0; }
+.cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
 .cal-spaces[hidden] { display: none; }
 .cal-spaces label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .cal-spaces label { padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); }
 .cal-spaces label:has(input:checked) { color: var(--text); }
 .cal-spaces label:not(:has(input:checked)) i { opacity: .25; }
 .cal-spaces input { display: none; }
-.cal-spaces i, .ev-add-opts i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+.cal-tags label.no-tag { border-color: transparent; padding: 1px 4px; }
+.cal-tags label.no-tag:not(:has(input:checked)) { text-decoration: line-through; }
+/* 달력 일정에 마우스 올리면 위에 뜨는 태그 칩 */
+.ev-tagtip { position: fixed; z-index: 40; display: flex; gap: 3px; pointer-events: none; font-size: 10px; }
+.ev-tagtip[hidden] { display: none; }
+.ev-tagtip span, .ev-add-tagpick button { display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); }
+.ev-add-tagpick { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.ev-add-tagpick[hidden] { display: none; }
+.ev-add-tagpick button { font: inherit; font-size: 11px; color: var(--text-muted); cursor: pointer; }
+.ev-add-tagpick button.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.cal-spaces i, .ev-tagtip i, .ev-add-tagpick i, .ev-add-opts i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
 
 /* ------------------------------------------------------------ 달력 우클릭·드래그: 일정 추가 팝업 */
 .ev-add {

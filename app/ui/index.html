@@ -55,8 +55,13 @@
           <button class="icon-btn close-btn" title="닫기">&#x2715;</button>
         </div>
         <!-- 달력에 일정을 보일 스페이스 (체크 끄면 숨김, 할일 창 일정 줄도 같이) -->
-        <div id="cal-spaces" class="cal-spaces" hidden></div>
+        <div class="cal-filters">
+          <div id="cal-spaces" class="cal-spaces" hidden></div>
+          <!-- 보이는 달에 쓴 태그 (끄면 그 태그 일정 숨김), 맨 끝 "태그 없는 일정" -->
+          <div id="cal-tags" class="cal-spaces cal-tags" hidden></div>
+        </div>
         <div id="cal-grid" class="cal-grid"></div>
+        <div id="ev-tagtip" class="ev-tagtip" hidden></div>
         <footer class="view-footer" id="cal-footer"></footer>
         <form id="ev-add" class="ev-add" hidden autocomplete="off">
           <div class="seg" id="ev-add-seg">
@@ -81,7 +86,8 @@
               <select id="ev-add-t1"></select><span class="sep">-</span><select id="ev-add-t2"></select>
             </div>
             <span class="k">태그</span>
-            <div class="v"><input type="text" id="ev-add-tags" placeholder="쉼표로 구분  예) 과제, 교육"></div>
+            <div class="v"><input type="text" id="ev-add-tags" placeholder="쉼표로 구분  예) 과제, 교육">
+              <div id="ev-add-tagpick" class="ev-add-tagpick" hidden></div></div>
             <span class="k">장소</span>
             <div class="v"><input type="text" id="ev-add-place"></div>
             <span class="k" id="ev-add-memo-k" hidden>메모</span>

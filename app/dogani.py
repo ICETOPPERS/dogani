@@ -65,7 +65,7 @@ DEFAULT_CONFIG = {
     "team_space_dir": "",     # 팀 호스트일 때 팀스페이스 폴더
     "visible": True,
     "space": ME,          # 지금 보고 있는 스페이스 (me | team)
-    "cal_hidden": [],     # 달력·할일 일정에서 숨긴 스페이스 키 (화면 공유할 때 내 일정 숨기기 등)
+    "cal_hidden": [],     # 달력·할일 일정에서 숨긴 스페이스 키·"#태그" ("#" = 태그 없는 일정)
     "windows": {},        # nav / note / cal -> {"pos", "panel", "open"}
     "on_top": False,      # False: 바탕화면에 고정 (Win+D 에도 남아 있음)
     "opacity": 100,
@@ -1043,7 +1043,7 @@ class doganiApp(QObject):
 
     def set_cal_hidden(self, keys):
         """달력·할일 창에서 숨길 스페이스 (창 하나에서 바꾸면 다른 창도 따라감)"""
-        self.cfg["cal_hidden"] = [k for k in keys if isinstance(k, str)][:20]
+        self.cfg["cal_hidden"] = [k for k in keys if isinstance(k, str)][:100]  # 스페이스 키 + 숨긴 태그("#태그", "#" = 태그 없음)
         self.save_later()
         for win in self.panels.values():
             win.push_config(calHidden=self.cfg["cal_hidden"])
