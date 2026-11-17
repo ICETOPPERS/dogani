@@ -452,7 +452,6 @@ body.writable .cm-table-widget { cursor: text; }
 .cal-day .count.done { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
 .cal-day .count.none { background: var(--bg-hover); color: var(--text-muted); }
 .header-title.is-today { color: var(--accent); }
-.dot.paused { background: #e8912d; box-shadow: 0 0 6px #e8912d; }
 .dot.blocked { background: #e05252; box-shadow: 0 0 6px #e05252; }
 .notice {
   flex: none;

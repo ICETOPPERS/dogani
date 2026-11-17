@@ -21,14 +21,14 @@
 
   const state = {
     mode: "nav",       // nav | note | cal
-    space: null,       // { key, name, server, prefix, kind: me|team|peer, status }
+    space: null,       // { key, name, server, prefix, kind: me|team, status }
     spaces: [],        // nav: 메뉴 목록
     base: "",          // "http://ip:port/api" 또는 ".../api/team"
     today: iso(new Date()),
     noteDate: iso(new Date()),
     calYM: iso(new Date()).slice(0, 7),
     calView: "month",  // month | doc
-    status: "offline", // online | offline | paused | blocked | team_only
+    status: "offline", // online | offline | blocked(팀 로그인 풀림)
     es: null,
     retryTimer: null,
     writable: false,
@@ -59,9 +59,7 @@
 
   const STATUS_TEXT = {
     offline: "연결할 수 없습니다.",
-    paused: "상대방이 공유를 일시 중지했습니다.",
-    blocked: "상대방이 접속을 차단했습니다.",
-    team_only: "팀원에게만 공유하는 노트입니다. (트레이 > 팀스페이스 > 팀 참여)",
+    blocked: "팀 로그인이 풀렸습니다. (트레이 > 팀스페이스 > 초대장으로 다시 참여)",
     not_member: "팀 로그인이 필요합니다. (트레이 > 팀스페이스)",
     client_only: "접속 키가 맞지 않습니다. (dogani 버전 확인)",
     conflict: "그 사이 다른 곳(옵시디언·다른 팀원)에서 수정되어 저장하지 않았습니다. 다시 불러옵니다.",
@@ -88,19 +86,12 @@
     if (!state.base) return;
 
     const es = new EventSource(state.base + "/events");
-    const applyPaused = (e) => {
-      setStatus(JSON.parse(e.data).paused ? "paused" : "online");
+    es.addEventListener("hello", () => {
+      setStatus("online");
       refresh();
-    };
-    es.addEventListener("hello", (e) => {
-      applyPaused(e);
       loadSchedule();
-      api("/info").then((info) => {
-        setWritable(!!info.writable);
-        if (sp.kind === "peer" && info.name && bridge) bridge.setName(sp.key, info.name);
-      }).catch(() => {});
+      api("/info").then((info) => setWritable(!!info.writable)).catch(() => {});
     });
-    es.addEventListener("status", applyPaused);
     es.addEventListener("schedule", () => loadSchedule());
     es.addEventListener("changed", (e) => {
       const dates = JSON.parse(e.data).dates || [];
@@ -110,13 +101,11 @@
     es.addEventListener("reload", () => { loadSchedule(); refresh(); });
     es.onerror = () => {
       if (state.es !== es) return;
-      // 브라우저가 자동 재연결을 포기한 경우(CLOSED: 403 등)에는 이유를 확인하고 직접 재시도
+      // 브라우저가 자동 재연결을 포기한 경우(CLOSED: 401·403 등)에는 이유를 확인하고 직접 재시도
       if (es.readyState === EventSource.CLOSED) {
         api("/info")
-          .then(() => api("/month?ym=" + state.calYM))   // 정보는 되는데 이벤트가 막힘 = 팀원 전용 등
           .then(() => setStatus("offline"))
-          .catch((e) => setStatus(["blocked", "team_only", "not_member"].includes(e.code)
-            ? (e.code === "blocked" ? "blocked" : "team_only") : "offline"))
+          .catch((e) => setStatus(e.code === "not_member" ? "blocked" : "offline"))
           .finally(() => { refresh(); state.retryTimer = setTimeout(connect, 5000); });
       } else {
         setStatus("offline");
@@ -508,7 +497,7 @@
     const sp = state.space;
     if (!sp) return;
     const dot = $("status-dot");
-    for (const s of ["online", "paused", "blocked"]) dot.classList.toggle(s, (sp.status === "team_only" ? "blocked" : sp.status) === s);
+    for (const s of ["online", "blocked"]) dot.classList.toggle(s, sp.status === s);
     $("space-name").textContent = sp.name;
     $("nav").title = `${sp.kind === "team" ? "팀스페이스" : "개인"} · 드래그해서 이동`;
     renderMenu(cfg);
@@ -531,11 +520,10 @@
       if (!items.length) continue;
       if (title) html += `<div class="sm-title">${title}</div>`;
       for (const s of items) {
-        const st = s.status === "team_only" ? "blocked" : s.status;
         html += `<button class="sm-item${s.key === cur ? " active" : ""}" data-key="${esc(s.key)}"${s.disabled ? " disabled" : ""}>` +
           `<span class="sm-name">${esc(s.name)}</span>` +
           (s.sub ? `<span class="sm-sub">${esc(s.sub)}</span>` : "") +
-          `<span class="dot ${st}"></span></button>`;
+          `<span class="dot ${esc(s.status)}"></span></button>`;
       }
     }
     html += `<div class="sm-sep"></div>`;
@@ -1142,7 +1130,7 @@
     const q = new URLSearchParams(location.search);
     App.configure({
       mode: q.get("mode") || "note", theme: q.get("theme") || "light",
-      space: { key: "test", name: q.get("server") || "test", server: q.get("server") || "", prefix: q.get("prefix") || "/api", kind: "peer", status: "offline" },
+      space: { key: "test", name: q.get("server") || "test", server: q.get("server") || "", prefix: q.get("prefix") || "/api", kind: "me", status: "offline" },
     });
   }
 })();

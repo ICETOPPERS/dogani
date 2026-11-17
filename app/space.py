@@ -22,13 +22,14 @@ def meta_dir(root):
     return os.path.join(root, META_DIR)
 
 
-def _read(path):
+def read_json(path):
+    """JSON 객체 파일 읽기 → dict. 없거나 깨졌거나 객체가 아니면 None"""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        return data if isinstance(data, dict) else None
     except (OSError, ValueError):
-        return {}
+        return None
 
 
 def write_json(path, data):
@@ -48,10 +49,10 @@ def open_space(root):
     if not os.path.exists(path) and os.path.exists(legacy):
         # 복사(이동 아님): 예전 exe 가 같은 폴더를 열어도 같은 id → 팀 키 파일 그대로
         try:
-            write_json(path, _read(legacy))
+            write_json(path, read_json(legacy) or {})
         except OSError:
             path = legacy   # 읽기 전용 등: 예전 파일 그대로 씀
-    data = _read(path)
+    data = read_json(path) or {}
     if not re.fullmatch(r"[0-9a-f]{16}", str(data.get("id", ""))):   # 키 파일 이름에 쓰임 → 경로 문자 금지
         data = {"created": dt.datetime.now().isoformat(timespec="seconds"), **data, "id": secrets.token_hex(8)}
         write_json(path, data)
