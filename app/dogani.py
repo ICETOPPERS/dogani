@@ -53,11 +53,12 @@ TEAM_POLL_MS = 20_000
 
 TEAM_STATUS = {"online": "연결됨", "offline": "호스트 연결 끊김", "logged_out": "다시 로그인 필요"}
 
-EMPTY_TEAM = {"host": "", "token": "", "id": "", "pub": "", "team": "", "members": []}
+EMPTY_TEAM = {"host": "", "pc": "", "token": "", "id": "", "pub": "", "team": "", "members": []}
 DEFAULT_CONFIG = {
     "port": DEFAULT_PORT,
     "space_dir": "",          # 지금 연 개인 스페이스 (폴더)
     "space_dirs": [],         # 최근 연 스페이스 (최근 것 먼저)
+    "space_names": {},        # 폴더 -> 붙인 이름 (없으면 폴더명)
     "name": "",           # 내 이름 (팀원에게 보이는 이름)
     "team": dict(EMPTY_TEAM),
     "team_host": False,   # 이 PC 가 팀 호스트
@@ -95,6 +96,8 @@ def load_config():
         # 새 exe 는 두 키를 같게 저장 → 다르면 예전 exe 가 고친 것이므로 예전 키가 최신
         if old in cfg:
             cfg[new] = cfg.pop(old)
+    if not isinstance(cfg.get("space_names"), dict):
+        cfg["space_names"] = {}
     if not isinstance(cfg.get("cal_hidden"), list):
         cfg["cal_hidden"] = []
     # v26.11.10 이전: todo 폴더 + 내 노트 공유(일시 중지·차단·팀원 전용·주소 추가) → 스페이스, 공유 없음
@@ -172,6 +175,23 @@ def normalize_server(text):
 
 
 # ---------------------------------------------------------------- http (팀 호스트와 통신)
+def find_host(pc, host, pub, token, name):
+    """호스트 IP 가 바뀌었을 때: PC 이름으로 새 IP 를 찾아(같은 망) 같은 팀(공개키 일치)이면 → (새 주소, 응답)"""
+    port = host.rsplit(":", 1)[-1]
+    try:
+        ips = {a[4][0] for a in socket.getaddrinfo(pc, None, socket.AF_INET)}
+    except (OSError, UnicodeError):
+        return None
+    for ip in ips:
+        alt = f"{ip}:{port}"
+        if alt == host:
+            continue
+        status, res = http_json(alt, "/api/team/me", token=token, name=name)
+        if status == 200 and pub and res.get("pub") == pub:
+            return alt, res
+    return None
+
+
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 사내 프록시를 타지 않게
 
 
@@ -332,12 +352,13 @@ class Tray(QObject):
     def space_items(self):
         Item = pystray.MenuItem
         cfg = self.app.cfg
-        items = [Item(f"{space.space_name(v)}  ({v})", self.emit("switch_space_dir", v),
+        items = [Item(f"{space.space_name(v, cfg['space_names'])}  ({v})", self.emit("switch_space_dir", v),
                       checked=lambda i, v=v: v == cfg["space_dir"], radio=True)
                  for v in cfg["space_dirs"]]
         if items:
             items.append(pystray.Menu.SEPARATOR)
-        items += [Item("폴더 열기 (탐색기)", self.emit("open_dir"), enabled=bool(cfg["space_dir"])),
+        items += [Item("이름 바꾸기...", self.emit("rename_space"), enabled=bool(cfg["space_dir"])),
+                  Item("폴더 열기 (탐색기)", self.emit("open_dir"), enabled=bool(cfg["space_dir"])),
                   Item("스페이스 열기...", self.emit("browse_dir"))]
         if len(cfg["space_dirs"]) > 1:
             items.append(Item("최근 목록 정리 (지금 스페이스만 남김)", self.emit("clear_space_dirs")))
@@ -393,6 +414,7 @@ class Tray(QObject):
         if t.get("token"):
             return pystray.Menu(
                 Item(f"호스트 {t['host']}  - {TEAM_STATUS.get(app.team_status, '')}", None, enabled=False),
+                Item("호스트 주소 바꾸기... (호스트 IP 가 바뀌었을 때)", self.emit("change_host")),
                 Item("초대장으로 다시 참여...", self.emit("join_team")),
                 pystray.Menu.SEPARATOR,
                 Item("팀 나가기 (이 PC 에서 로그아웃)", self.emit("leave_team")),
@@ -407,7 +429,7 @@ class Tray(QObject):
         Item = pystray.MenuItem
         app, cfg = self.app, self.app.cfg
         share = app.share
-        space_label = f"개인: {space.space_name(cfg['space_dir'])}" if cfg["space_dir"] else "개인: (안 열림)"
+        space_label = f"개인: {space.space_name(cfg['space_dir'], cfg['space_names'])}" if cfg["space_dir"] else "개인: (안 열림)"
         if share and share.team:
             team_label = f"팀스페이스: {share.team.name} (호스트)"
         elif cfg["team"].get("token"):
@@ -439,7 +461,7 @@ class Tray(QObject):
         share = self.app.share
         self.icon.icon = make_icon_image(ICON_COLORS["on" if share else "off"])
         if share:
-            self.icon.title = f"dogani {liveupdate.version_text()} - {space.space_name(self.app.cfg['space_dir'])}"
+            self.icon.title = f"dogani {liveupdate.version_text()} - {space.space_name(self.app.cfg['space_dir'], self.app.cfg['space_names'])}"
         else:
             self.icon.title = f"dogani - 포트 {self.app.cfg['port']} 사용 중 (스페이스를 열 수 없음)"
 
@@ -975,7 +997,7 @@ class doganiApp(QObject):
                         "prefix": "/api/team", "kind": "team",
                         "status": (self.status.get(TEAM) or "online") if self.team_status == "online" else
                         ("blocked" if self.team_status == "logged_out" else "offline")})
-        out.append({"key": ME, "group": "me", "name": space.space_name(cfg["space_dir"]) or cfg["name"],
+        out.append({"key": ME, "group": "me", "name": space.space_name(cfg["space_dir"], cfg["space_names"]) or cfg["name"],
                     "server": f"127.0.0.1:{cfg['port']}",
                     "prefix": "/api", "kind": "me", "status": "online" if self.share else "offline",
                     "sub": "" if self.share else "포트 사용 중"})
@@ -1039,10 +1061,15 @@ class doganiApp(QObject):
         if not t.get("token") or self.team_polling:
             return
         self.team_polling = True
-        host, token, name = t["host"], t["token"], self.cfg["name"]
+        host, token, name, pc, pub = t["host"], t["token"], self.cfg["name"], t.get("pc", ""), t.get("pub", "")
+        own = self.cfg["team_host"]
 
         def work():
             status, res = http_json(host, "/api/team/me", token=token, name=name)
+            if status == 0 and pc and not own:
+                found = find_host(pc, host, pub, token, name)
+                if found:
+                    status, res = 200, {**found[1], "_host": found[0], "_token": token}
             self.team_result.emit(status, res)
 
         threading.Thread(target=work, daemon=True).start()
@@ -1054,6 +1081,10 @@ class doganiApp(QObject):
             return
         prev = self.team_status
         if status == 200:
+            if res.get("_host") and res.get("_token") == t["token"]:   # PC 이름으로 바뀐 IP 를 찾음
+                t["host"] = res["_host"]
+                self.tray.notify(f"팀 호스트의 주소가 바뀌어 {t['host']} 로 다시 연결했습니다.")
+            t["pc"] = res.get("pc") or t.get("pc", "")
             self.team_status = "online"
             t["members"] = res.get("members") or []
             t["pub"] = res.get("pub") or t.get("pub", "")
@@ -1227,6 +1258,46 @@ class doganiApp(QObject):
         self.push_spaces()
         self.tray.update()
 
+    def rename_space(self):
+        root = self.cfg["space_dir"]
+        if not root:
+            return
+        text, ok = QInputDialog.getText(None, "개인 스페이스 이름", "이름 (비우면 폴더명)",
+                                        QLineEdit.EchoMode.Normal, space.space_name(root, self.cfg["space_names"]))
+        if not ok:
+            return
+        name = clean_name(text)
+        if name and name != space.space_name(root):
+            self.cfg["space_names"][root] = name
+        else:
+            self.cfg["space_names"].pop(root, None)
+        self.save_later()
+        self.push_spaces()
+        self.tray.update()
+
+    def change_host(self):
+        """호스트 IP 가 바뀌었을 때 주소만 바꿈 (토큰 그대로). 같은 팀 호스트(공개키 일치)일 때만 바꿈"""
+        t = self.cfg["team"]
+        if not t.get("token"):
+            return
+        text, ok = QInputDialog.getText(None, "호스트 주소", "호스트 PC 의 새 주소 (예: 192.168.0.12:8765)",
+                                        QLineEdit.EchoMode.Normal, t["host"])
+        host = normalize_server(text) if ok else ""
+        if not host or host == t["host"]:
+            return
+        status, res = http_json(host, "/api/team/me", token=t["token"], name=self.cfg["name"])
+        if status == 401:
+            return QMessageBox.warning(None, APP_NAME, "그 호스트가 이 PC 를 팀원으로 인정하지 않습니다.\n"
+                                       "다른 팀이거나 내보내진 상태입니다. 초대장으로 다시 참여하세요.")
+        if status != 200:
+            return QMessageBox.warning(None, APP_NAME, self.team_request_result(host, status, res)[1])
+        if t.get("pub") and res.get("pub") != t["pub"]:
+            return QMessageBox.warning(None, APP_NAME, "그 주소는 다른 팀의 호스트입니다. 주소를 확인하세요.")
+        t["host"] = host
+        save_config(self.cfg)
+        self.on_team_result(status, res)
+        self.tray.notify(f"호스트 주소를 {host} 로 바꿨습니다.")
+
     # ------------------------------------------------------------ windows
     def open_panels(self):
         return {m: m in self.panels for m in ("note", "cal")}
@@ -1367,6 +1438,10 @@ class doganiApp(QObject):
             self.select_space(arg)
         elif name == "rename":
             self.rename()
+        elif name == "rename_space":
+            self.rename_space()
+        elif name == "change_host":
+            self.change_host()
         elif name == "join_team":
             self.join_team()
         elif name == "leave_team":
@@ -1416,6 +1491,7 @@ class doganiApp(QObject):
             self.switch_space_dir(arg)
         elif name == "clear_space_dirs":
             cfg["space_dirs"] = [cfg["space_dir"]] if cfg["space_dir"] else []
+            cfg["space_names"] = {k: v for k, v in cfg["space_names"].items() if k in cfg["space_dirs"]}
         elif name == "set_on_top":
             cfg["on_top"] = arg
             for ov in self.windows():

@@ -63,5 +63,8 @@ def open_space(root):
     return data
 
 
-def space_name(root):
-    return os.path.basename(os.path.normpath(root)) if root else ""
+def space_name(root, names=None):
+    """개인 스페이스 이름: 붙인 이름(설정 space_names) 있으면 그것, 없으면 폴더명"""
+    if not root:
+        return ""
+    return (names or {}).get(root) or os.path.basename(os.path.normpath(root))

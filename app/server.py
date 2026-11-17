@@ -453,7 +453,9 @@ class Handler(BaseHTTPRequestHandler):
             team.touch(mid, "")
             members = team.members()
             me = next((m for m in members if m["id"] == mid), None)
-            return self._send_json({"me": me, "members": members, "pub": team.pub, "team": team.name})
+            # pc = 호스트 PC 이름: 호스트 IP 가 바뀌면 팀원이 이 이름으로 다시 찾음
+            return self._send_json({"me": me, "members": members, "pub": team.pub, "team": team.name,
+                                    "pc": self.share.pc_name})
         if path == "/profile" and method == "POST":
             body = self._body()
             name = team.update_profile(mid, body.get("name"))
