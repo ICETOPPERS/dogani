@@ -160,12 +160,10 @@
   }
 
   const spaceByKey = (k) => state.spaces.find((s) => s.key === k) || (state.space && state.space.key === k ? state.space : null);
-  /** 일정을 읽을 수 있는 스페이스 (지금 보는 스페이스 먼저). 다시 로그인 필요(blocked)·꺼진 항목은 뺌 */
+  /** 일정을 읽을 수 있는 스페이스 (트레이 메뉴 순서 그대로, 탭을 바꿔도 순서 고정). 다시 로그인 필요(blocked)·꺼진 항목은 뺌 */
   function schedSpaces() {
-    const list = state.spaces.length ? state.spaces.filter((s) => s.server && !s.disabled && s.status !== "blocked")
+    return state.spaces.length ? state.spaces.filter((s) => s.server && !s.disabled && s.status !== "blocked")
       : state.space ? [state.space] : [];
-    const cur = state.space && list.find((s) => s.key === state.space.key);
-    return cur ? [cur, ...list.filter((s) => s !== cur)] : list;
   }
   const shownSpaces = () => schedSpaces().filter((s) => !state.calHidden.has(s.key));
   /** 일정을 고칠 수 있음 = 쓰기 권한 + 그 일정이 있는 스페이스가 모두 연결됨 (꺼진 호스트에 쓰다 멈추지 않게) */

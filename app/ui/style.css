@@ -601,7 +601,7 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .panel-bar .close-btn { font-size: 13px; color: var(--text-muted); width: 26px; }
 .panel-bar .header-title { cursor: move; }
 .panel-bar .header-title.is-today { color: var(--accent); }
-#view-note .progress-row { padding: 8px 14px 2px; }
+#view-note .progress-row { padding: 8px 14px 2px; min-height: 18px; }   /* 할일 수 글자가 없어도 높이 같게 */
 .space-tabs[hidden] { display: none; }
 .space-tabs { display: flex; gap: 2px; padding: 6px 10px 0; flex: none; overflow-x: auto; scrollbar-width: none; }
 .space-tab {
