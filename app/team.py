@@ -399,12 +399,24 @@ class TeamHost:
 
     # -- 일정 작성자 (줄 끝 꼬리표 id → 이름)
     def with_authors(self, events):
-        """일정 목록에 작성·수정 팀원 이름(who) 붙이기. 꼬리표 없는 줄은 그대로"""
+        """일정 목록에 작성·수정 팀원 이름(who) 붙이고, id 붙은 @멤버는 지금 이름으로. 꼬리표 없는 줄은 그대로"""
         with self.lock:
             members = self.data["members"]
             name = lambda i: (members.get(i) or {}).get("name", "(나간 팀원)") if i else ""
-            return [{**ev, "who": {"by": name(ev["by"]), "mod": name(ev.get("mod"))}} if ev.get("by") else ev
-                    for ev in events]
+            out = []
+            for ev in events:
+                if ev.get("by"):
+                    ev = {**ev, "who": {"by": name(ev["by"]), "mod": name(ev.get("mod"))}}
+                if any(ev.get("member_ids") or ()):   # @이름~id → 지금 이름 (나간 팀원은 적힌 이름 그대로)
+                    ev = {**ev, "members": [(members.get(i) or {}).get("name", n)
+                                            for n, i in zip(ev["members"], ev["member_ids"])]}
+                out.append(ev)
+            return out
+
+    def member_ids(self):
+        """{이름.casefold(): 팀원id}: 일정 저장 때 @이름 에 ~id 붙이기용 (schedule.stamp)"""
+        with self.lock:
+            return {m["name"].casefold(): mid for mid, m in self.data["members"].items()}
 
     def members(self):
         now = time.time()

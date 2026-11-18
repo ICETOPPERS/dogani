@@ -544,7 +544,7 @@ class Handler(BaseHTTPRequestHandler):
                                     "decos": team.with_authors(team.store.decorations()),
                                     "members": [m["name"] for m in team.members()]})   # @멤버 칩 후보
         self._space(method, path, qs, team.store, team.hub, writable=writable,
-                    stamp=lambda old, new: schedule.stamp(old, new, mid))
+                    stamp=lambda old, new: schedule.stamp(old, new, mid, team.member_ids()))
 
     # ------------------------------------------------------------ 스페이스 공통 (개인·팀)
     def _space(self, method, path, qs, store, hub, writable, stamp=None, tasks=False):

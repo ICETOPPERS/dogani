@@ -29,6 +29,7 @@ _OPEN_END_RE = re.compile(r"^" + _DATE + r"\s*[-~](?=\s*$|\s+\d{1,2}:|\s*[^\d\s]
 _LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\[.\]\s+)?")
 _MARK_RE = re.compile(r"\*|==")  # 굵게(**)·기울임(*)·하이라이트(==) 기호
 _DECO_RE = re.compile(_DATE + r"\s*✦\s*(.*)$")   # 장식 줄 (글자가 비어도 장식: 일정 "✦" 로 둔갑 안 함)
+_MEM_RE = re.compile(r"^@(.+?)~([0-9a-f]{8})$")  # 멤버 "@이름~팀원id" (팀스페이스, 화면엔 id 로 찾은 현재 이름)
 _WHO_RE = re.compile(r"\s+~([0-9a-f]{8})(?:>([0-9a-f]{8}))?\s*$")  # 줄 끝 작성자 꼬리표 " ~작성id" / " ~작성id>수정id" (팀스페이스)
 
 
@@ -105,14 +106,18 @@ def parse_line(line):
         time = ""
     rest = [_MARK_RE.sub("", f).strip() for f in fields[1:]]
     title = rest[0] if rest else ""
-    tags, members, others = [], [], []
+    tags, members, member_ids, others = [], [], [], []
     for f in rest[1:]:
         if f[:1] in ("#", "@"):
             for t in f.split():
                 if len(t) > 1 and t[0] == "#":
                     tags.append(t[1:])
-                elif len(t) > 1 and t[0] == "@" and t[1:] not in members:
-                    members.append(t[1:])
+                elif len(t) > 1 and t[0] == "@":
+                    m = _MEM_RE.match(t)
+                    name, mid = (m[1], m[2]) if m else (t[1:], "")
+                    if name not in members:
+                        members.append(name)
+                        member_ids.append(mid)
         else:
             others.append(f)  # 빈 칸도 자리로 셈: "제목, , 메모" = 장소 없이 메모
     while others and not others[-1]:
@@ -125,7 +130,8 @@ def parse_line(line):
         "open": open_,  # "start" = 시작 미정(-261119), "end" = 끝 미정(261119-)
         "title": title,
         "tags": tags,
-        "members": members,  # @이름 (글자 그대로, 팀원 id 와 묶지 않음)
+        "members": members,  # @이름 (팀스페이스는 team.with_authors 가 id 로 현재 이름으로 바꿈)
+        "member_ids": member_ids,  # members 와 같은 순서, id 없는 멤버는 ""
         "place": others[0] if others else "",
         "memo": ", ".join(f for f in others[1:] if f),
         "holiday": holiday,
@@ -137,16 +143,32 @@ def parse_line(line):
     }
 
 
-def stamp(old, new, mid):
+def _tag_member_ids(body, ids):
+    """태그 칸(#·@ 로 시작하는 칸)의 id 없는 @이름 중 팀원 이름(대소문자 무시)과 같은 것에 ~id 를 붙임"""
+    def field(f):
+        if _MARK_RE.sub("", f).strip()[:1] not in ("#", "@"):
+            return f
+        return re.sub(r"(?<!\S)@([^\s~]+)(?!\S)",
+                      lambda m: f"@{m[1]}~{ids[m[1].casefold()]}" if m[1].casefold() in ids else m[0], f)
+    parts = re.split(r"([,，])", body)   # [첫 칸, 구분자, 칸, 구분자, 칸 ...]
+    return "".join(field(x) if j and j % 2 == 0 else x for j, x in enumerate(parts))
+
+
+def stamp(old, new, mid, ids=None):
     """팀스페이스 일정 파일 저장 전: old 에 글자 그대로 없는 일정 줄에 작성자 꼬리표를 붙임.
     꼬리표 없는 줄 = 새로 씀 → " ~mid", 꼬리표 있는 줄 = 고침(달력 수정이 원래 꼬리표를 넘김) → " ~작성id>mid".
-    그대로이거나 옮기기만 한 줄은 안 건드림. 지운 줄은 꼬리표도 같이 사라짐"""
+    그대로이거나 옮기기만 한 줄은 안 건드림. 지운 줄은 꼬리표도 같이 사라짐.
+    ids = {이름.casefold(): 팀원id} 이면 바뀐 줄의 @이름 에 ~id 를 붙임"""
     keep = {l.strip() for l in (old or "").splitlines()}
     out = []
     for line in new.splitlines(keepends=True):
         body = line.rstrip("\r\n")
         if body.strip() and body.strip() not in keep and parse_line(body):
             who = _WHO_RE.search(body)
+            if ids:
+                cut = who.start() if who else len(body)
+                body = _tag_member_ids(body[:cut], ids) + body[cut:]
+                who = _WHO_RE.search(body)
             if who:
                 body = body[:who.start()] + (f" ~{who[1]}" if who[1] == mid else f" ~{who[1]}>{mid}")
             else:
