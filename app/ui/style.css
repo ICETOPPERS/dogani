@@ -229,12 +229,13 @@ body.writable .task-checkbox { cursor: pointer; }
 
 /* 목록: 들여쓰기는 단계마다 고정 폭 위젯 + 가이드선, 줄바꿈 시 기호 뒤로 맞춤 (hanging indent) */
 .cm-li { --hang: calc(var(--lvl) * var(--ind) + var(--mk)); padding-left: var(--hang) !important; text-indent: calc(-1 * var(--hang)); }
+.cm-li { position: relative; }
 .cm-li > * { text-indent: 0; }
-.cm-indent { display: inline-block; position: relative; height: 1em; vertical-align: baseline; }
-.cm-guide {
+.cm-indent { display: inline-block; height: 1em; vertical-align: baseline; }
+.cm-guide {   /* 줄(.cm-li) 기준 위아래 끝까지 → 줄 사이 끊김 없음 */
   position: absolute;
-  top: -.4em;
-  height: 1.6em;
+  top: 0;
+  bottom: 0;
   left: calc(var(--k) * var(--ind) + .5em);   /* 부모 기호 중앙 아래 */
   border-left: 1px solid var(--guide);
   pointer-events: none;
