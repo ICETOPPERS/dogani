@@ -5,7 +5,8 @@
 ## 작업 내역 (미커밋)
 
 - (없음)
-- 합치지 않은 worktree 브랜치: `offline-sync`(노트 끊김·동시 편집 합치기, server.py 포함 → 합치기 전 /code-review 필요, main 보다 19커밋 뒤), `release-flow`(release.bat·릴리스 노트 자동화, 42커밋 뒤)
+- `offline-sync`(노트 끊김·동시 편집): main 위로 리베이스, draft PR #4. /code-review medium 10건(상대 편집 덮어씀·커서 튐·스페이스 바꾼 뒤 엉뚱한 곳 저장·403 반복·재연결 무한 반복·문구 규칙·server.py 일정 파일 경로 잠금 밖 등) → 고친 뒤 합칠 것. 목록은 PR 본문
+- `release-flow`(release.bat): 릴리스 노트를 CHANGELOG 항목으로 채우는 방식이라 지금 규칙(런처 변경분만 + 코드 버전 한 줄)과 다름 → 합치지 않음. 지워도 됨
 
 ## 판단 사항 / 애매한 부분
 
