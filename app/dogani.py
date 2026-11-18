@@ -64,7 +64,7 @@ DEFAULT_CONFIG = {
     "name": "",           # 내 이름 (팀원에게 보이는 이름)
     "cal_hidden": [],     # 달력·할일 일정에서 숨긴 스페이스 id·"#태그" ("#" = 태그 없는 일정)
     "windows": {},        # note / cal -> {"pos", "panel", "open"}
-    "on_top": False,      # False: 바탕화면에 고정 (Win+D 에도 남아 있음)
+    "wake_click": False,  # True: 다른 프로그램 사용 중엔 굳어 있다가 클릭하면 깨어남 (창은 항상 바탕화면에 고정)
     "opacity": 100,
     "theme": "light",
 }
@@ -383,8 +383,7 @@ class Tray(QObject):
             pystray.Menu.SEPARATOR,
             *self.space_list(),
             pystray.Menu.SEPARATOR,
-            Item("바탕화면에 고정", self.emit("set_on_top", False), checked=lambda i: not cfg["on_top"], radio=True),
-            Item("항상 위에 표시", self.emit("set_on_top", True), checked=lambda i: cfg["on_top"], radio=True),
+            Item("클릭 시 깨어나기", self.emit("toggle_wake"), checked=lambda i: cfg["wake_click"]),
             Item("투명도", pystray.Menu(*[
                 Item(f"{level}%", self.emit("opacity", level),
                      checked=lambda i, lv=level: cfg["opacity"] == lv, radio=True)
@@ -708,6 +707,13 @@ class ResizeGhost(QWidget):
 
 
 VK_LBUTTON = 0x01
+WM_MOUSEACTIVATE, MA_ACTIVATEANDEAT = 0x0021, 2
+WM_WINDOWPOSCHANGING, SWP_NOZORDER = 0x0046, 0x0004
+
+
+class WINDOWPOS(ctypes.Structure):
+    _fields_ = [("hwnd", wintypes.HWND), ("insert_after", wintypes.HWND), ("x", ctypes.c_int), ("y", ctypes.c_int),
+                ("cx", ctypes.c_int), ("cy", ctypes.c_int), ("flags", wintypes.UINT)]
 
 
 class Overlay(QWidget):
@@ -737,16 +743,29 @@ class Overlay(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.view)
 
-        self.setWindowOpacity(app.cfg["opacity"] / 100)
         w, h = self.wcfg.get("panel") or PANEL_DEFAULT_SIZE[mode]
         mw, mh = PANEL_MIN_SIZE[mode]
         self.setMinimumSize(mw, mh)
         self.resize(max(w, mw), max(h, mh))
+        self.setWindowOpacity(app.cfg["opacity"] / 100)
         self.restore_position()
         # 탐색기 재시작 등으로 바탕화면 창이 바뀌면 다시 고정
         self.pin_timer = QTimer(self, interval=5000, timeout=self.apply_pin)
         self.pin_timer.start()
         self.view.load(QUrl("dogani://ui/index.html"))
+
+    def nativeEvent(self, event_type, message):
+        # 다른 앱을 쓰다 바탕화면의 dogani 를 처음 누르면 창만 깨우고 그 클릭은 버림
+        # → 지나가다 누른 클릭에 체크박스·링크가 바로 눌리지 않게 (두 번째 클릭부터 동작)
+        if event_type == b"windows_generic_MSG":
+            msg = wintypes.MSG.from_address(int(message))
+            if (msg.message == WM_MOUSEACTIVATE and self.app.cfg["wake_click"]
+                    and self.app.qapp.applicationState() != Qt.ApplicationState.ApplicationActive):
+                return True, MA_ACTIVATEANDEAT
+            if msg.message == WM_WINDOWPOSCHANGING and self.app.cfg["wake_click"]:
+                # 바탕화면 고정: 눌러도 다른 창 위로 올라오지 않게 (깨어나기만 함)
+                WINDOWPOS.from_address(msg.lParam).flags |= SWP_NOZORDER
+        return super().nativeEvent(event_type, message)
 
     @property
     def wcfg(self):
@@ -763,8 +782,6 @@ class Overlay(QWidget):
     # -- window flags
     def apply_flags(self):
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-        if self.app.cfg["on_top"]:
-            flags |= Qt.WindowType.WindowStaysOnTopHint
         visible = self.isVisible()
         self.setWindowFlags(flags)
         if visible:
@@ -776,11 +793,11 @@ class Overlay(QWidget):
         QTimer.singleShot(300, self.apply_pin)
 
     def apply_pin(self):
-        """바탕화면 고정 모드면 바탕화면 창을 소유자로 지정, 항상 위 모드면 해제."""
+        """바탕화면 창을 소유자로 지정 (Win+D 에도 남고 다른 창 위로 올라오지 않음)"""
         if not self.isVisible():
             return
         hwnd = int(self.winId())
-        target = None if self.app.cfg["on_top"] else find_desktop_window()
+        target = find_desktop_window()
         if (get_owner(hwnd) or None) != (target or None):
             set_owner(hwnd, target)
 
@@ -916,6 +933,7 @@ class doganiApp(QObject):
         super().__init__()
         self.qapp = qapp
         self.cfg = cfg
+        qapp.applicationStateChanged.connect(self.push_awake)
         self.status = {}     # 스페이스 키 -> 창에서 알려 준 연결 상태
         self.panels = {}     # "note" | "cal" -> Overlay (트레이에서 켜고 끔)
         self.join_status = {}   # 참여 스페이스 id -> online | offline | logged_out
@@ -962,6 +980,14 @@ class doganiApp(QObject):
 
     def windows(self):
         return list(self.panels.values())
+
+    def awake(self):
+        """dogani 창을 눌러 쓰는 중인지. 아니면 창은 바탕화면처럼 굳어 있음 (호버 없음, 배경 옅게)"""
+        return not self.cfg["wake_click"] or self.qapp.applicationState() == Qt.ApplicationState.ApplicationActive
+
+    def push_awake(self, *_):
+        for win in self.windows():   # 한 창을 눌러도 두 창이 함께 깨어남
+            win.push_config(awake=self.awake())
 
     # ------------------------------------------------------------ spaces
     def entry(self, sid):
@@ -1143,7 +1169,7 @@ class doganiApp(QObject):
 
     def js_common(self):
         # spaces = 달력에 같이 그릴 수 있는 스페이스 전부 (일정 팝업의 스페이스 선택에도 씀)
-        return {"theme": self.cfg["theme"], "space": self.current_space(), "spaces": self.spaces(),
+        return {"awake": self.awake(), "theme": self.cfg["theme"], "space": self.current_space(), "spaces": self.spaces(),
                 "calHidden": self.cfg["cal_hidden"], "myName": self.cfg["name"]}
 
     def push_spaces(self):
@@ -1591,10 +1617,9 @@ class doganiApp(QObject):
             host = self.local_host(sid)
             if host:
                 self.space_command(name, host, rest)
-        elif name == "set_on_top":
-            cfg["on_top"] = arg
-            for ov in self.windows():
-                ov.apply_flags()
+        elif name == "toggle_wake":
+            cfg["wake_click"] = not cfg["wake_click"]
+            self.push_awake()
         elif name == "opacity":
             cfg["opacity"] = arg
             for ov in self.windows():

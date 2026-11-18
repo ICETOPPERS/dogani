@@ -1712,6 +1712,8 @@
      * { mode, theme, space, spaces, calHidden, date, noteDate }
      */
     configure(cfg) {
+      // 클릭 시 깨어나기 옵션: 다른 프로그램을 쓰는 중 → asleep (배경만 옅게, 글자·선은 그대로. DESIGN.md)
+      if ("awake" in cfg) document.body.classList.toggle("asleep", !cfg.awake);
       if (cfg.theme) {
         document.body.classList.toggle("theme-light", cfg.theme !== "dark");
         document.body.classList.toggle("theme-dark", cfg.theme === "dark");

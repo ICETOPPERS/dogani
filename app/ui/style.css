@@ -1,8 +1,13 @@
 /* ------------------------------------------------------------ theme */
 /* 색 칩·일정 블록 공용, 테마 무관 (DESIGN.md) */
 :root { --tint-bg: 18%; --tint-fg: 80%; --tint-radius: 4px; }
+/* 클릭 시 깨어나기 옵션: 잠듦이면 창 배경 알파에 --bg-sleep 배 */
+body { --bg-sleep: .3; --bg-k: 1; }
+body.asleep { --bg-k: var(--bg-sleep); }
+/* 잠듦: 마우스를 올려도 반응 없음 (첫 클릭은 창을 깨우기만 함, dogani.py WM_MOUSEACTIVATE) */
+body.asleep #panel { pointer-events: none; }
 .theme-light {
-  --bg: rgba(255, 255, 255, 0.90);
+  --bg: rgba(255, 255, 255, calc(0.90 * var(--bg-k)));
   --bg-solid: rgb(255, 255, 255);   /* 정보 카드처럼 뒤 글자가 비치면 안 되는 곳 */
   --bg-hover: rgba(0, 0, 0, 0.06);
   --border: rgba(0, 0, 0, 0.12);
@@ -24,7 +29,7 @@
   --shadow: 0 2px 7px rgba(0, 0, 0, 0.20);
 }
 .theme-dark {
-  --bg: rgba(32, 32, 32, 0.88);
+  --bg: rgba(32, 32, 32, calc(0.88 * var(--bg-k)));
   --bg-solid: rgb(32, 32, 32);
   --bg-hover: rgba(255, 255, 255, 0.08);
   --border: rgba(255, 255, 255, 0.12);
@@ -74,14 +79,8 @@ html, body {
   border-radius: 50%;
   background: #9e9e9e;
   flex: none;
-  transition: background .3s;
 }
 .dot.online { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
-.dot.pulse { animation: pulse .8s ease-out; }
-@keyframes pulse {
-  0% { transform: scale(1.8); }
-  100% { transform: scale(1); }
-}
 /* ------------------------------------------------------------ panel */
 #panel {
   position: relative;
@@ -93,6 +92,7 @@ html, body {
   box-shadow: var(--shadow);
   overflow: hidden;
 }
+body.asleep #panel { box-shadow: none; }   /* 그림자가 있으면 떠 있는 창처럼 보임 */
 .view { display: flex; flex-direction: column; height: 100%; }
 .view[hidden], #panel[hidden], .progress-row[hidden] { display: none; }
 
@@ -147,7 +147,7 @@ body.writable .task-checkbox { cursor: pointer; }
   flex: none;
 }
 .progress { flex: 1; height: 4px; border-radius: 2px; background: var(--bg-hover); overflow: hidden; }
-.progress-bar { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.progress-bar { height: 100%; width: 0; background: var(--accent); }
 .progress-bar.done { background: var(--ok); }
 .progress-text { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
