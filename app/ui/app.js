@@ -22,7 +22,7 @@
     mode: "",          // note | cal
     space: null,       // { key, name, server, prefix, kind: me|team, status }
     spaces: [],        // 달력에 같이 그릴 수 있는 스페이스 전부
-    base: "",          // "http://ip:port/api" 또는 ".../api/team"
+    base: "",          // "http://ip:port/api/s/<스페이스id>"
     today: iso(new Date()),
     noteDate: iso(new Date()),
     calYM: iso(new Date()).slice(0, 7),
@@ -62,8 +62,9 @@
 
   const STATUS_TEXT = {
     offline: "연결할 수 없습니다.",
-    blocked: "팀 로그인이 풀렸습니다. (트레이 > 팀스페이스 > 초대장으로 다시 참여)",
-    not_member: "팀 로그인이 필요합니다. (트레이 > 팀스페이스)",
+    blocked: "로그인이 풀렸습니다. 트레이 > 스페이스에서 초대장으로 다시 참여해 주세요.",
+    not_member: "이 스페이스의 팀원이 아닙니다. 트레이 > 다른 스페이스에 참여하기 로 들어와 주세요.",
+    no_space: "그 PC 에 이 스페이스가 없습니다.",
     client_only: "접속 키가 맞지 않습니다. (dogani 버전 확인)",
     conflict: "그 사이 다른 곳(옵시디언·다른 팀원)에서 수정되어 저장하지 않았습니다. 다시 불러옵니다.",
     read_only: "편집 권한이 없습니다.",
@@ -138,6 +139,26 @@
 
   // ------------------------------------------------------------ schedule (보이는 스페이스들의 일정을 합쳐 그림)
   const spBase = (sp) => (sp && sp.server ? "http://" + sp.server + sp.prefix : "");
+  /** 할일 창 위 스페이스 탭 (둘 이상일 때만). 달력은 모든 스페이스를 함께 그리므로 탭이 없음 */
+  function renderSpaceTabs() {
+    const box = $("note-tabs");
+    if (!box) return;
+    const list = state.spaces || [];
+    box.hidden = state.mode !== "note" || list.length < 2;
+    if (box.hidden) { box.textContent = ""; return; }
+    box.textContent = "";
+    for (const sp of list) {
+      const b = document.createElement("button");
+      b.className = "space-tab" + (state.space && sp.key === state.space.key ? " active" : "");
+      b.textContent = sp.name;
+      b.title = sp.server || "";
+      b.addEventListener("click", () => {
+        if (bridge && !(state.space && sp.key === state.space.key)) bridge.selectSpace(sp.key);
+      });
+      box.appendChild(b);
+    }
+  }
+
   const spaceByKey = (k) => state.spaces.find((s) => s.key === k) || (state.space && state.space.key === k ? state.space : null);
   /** 일정을 읽을 수 있는 스페이스 (지금 보는 스페이스 먼저). 다시 로그인 필요(blocked)·꺼진 항목은 뺌 */
   function schedSpaces() {
@@ -152,7 +173,11 @@
   const spOnline = (sp) => !!sp && (state.space && sp.key === state.space.key ? state.status === "online" : sp.status === "online");
   const canEdit = (ev) => (ev.spaces || []).every((k) => { const sp = spaceByKey(k); return spOnline(sp) && !state.roSpaces.has(k); });
   /** 스페이스 표시 색: 개인 스페이스 = 회색, 팀 = 이름 해시 색 (태그 색과 같은 방식) */
-  const spaceColor = (sp) => (!sp || sp.kind === "me" ? "var(--sp-me)" : `hsl(${CAL.tagHue("space:" + sp.name)} 55% 55%)`);
+  // 첫 내 스페이스만 회색, 나머지(내 스페이스 여럿·참여 스페이스)는 이름으로 색
+  const spaceColor = (sp) => {
+    const first = state.spaces.find((s) => s.kind === "me");
+    return !sp || (first && sp.key === first.key) ? "var(--sp-me)" : `hsl(${CAL.tagHue("space:" + sp.name)} 55% 55%)`;
+  };
 
   async function loadSchedule(sp) {
     sp = sp || state.space;
@@ -223,7 +248,8 @@
     const decos = {};
     for (const sp of shown) for (const d of state.decoBySpace[sp.key] || []) (decos[d.start] = decos[d.start] || []).push({ ...d, sp: sp.key });
     state.decos = decos;
-    state.sched = CAL.index([...list.filter((ev) => tagShown(ev) && memberShown(ev)), ...tasks]);
+    state.schedItems = [...list.filter((ev) => tagShown(ev) && memberShown(ev)), ...tasks];
+    state.sched = CAL.index(state.schedItems);
     if (state.mode === "cal" && state.calView === "month") renderMonth();
     if (state.mode === "note") renderSchedRow();
   }
@@ -387,6 +413,8 @@
           tableHtml: MD.tableHtml,
           onChange(text, immediate) {
             p.lines = text.split("\n");
+            // 글을 쓰기 시작하면 빈 노트 안내(마지막 노트 복사 버튼)는 바로 지움
+            if (text.trim()) o.body.querySelector(":scope > .empty")?.remove();
             if (o.progress) setProgress(...countTasks(p.lines));
             clearTimeout(timer);
             timer = setTimeout(p.save, 700);
@@ -687,7 +715,10 @@
 
   function renderSchedRow() {
     const row = $("note-sched");
-    const html = CAL.dayEvents(state.noteDate, state.sched);
+    // 노트(할일) 창은 지금 탭의 스페이스 일정만 보여 줌 (달력은 보이는 스페이스를 모두 합침)
+    const key = state.space && state.space.key;
+    const own = (state.schedItems || []).filter((ev) => (ev.spaces || []).includes(key));
+    const html = CAL.dayEvents(state.noteDate, CAL.index(own));
     row.innerHTML = html;
     row.hidden = !html;
   }
@@ -695,7 +726,7 @@
   /** 노트가 없거나 비었을 때: 직전 노트를 그대로 복사하는 버튼 */
   function copyButton(d) {
     if (!state.writable || !d || !d.prev || d.no_dir) return "";
-    return `<button class="copy-prev" data-prev="${d.prev}">어제 노트 복사 <span>(${dayLabel(d.prev)})</span></button>`;
+    return `<button class="copy-prev" data-prev="${d.prev}">마지막 노트 복사<span>(${dayLabel(d.prev)})</span></button>`;
   }
 
   async function copyPrev(prev) {
@@ -1079,7 +1110,7 @@
       const keys = ev ? ev.spaces || [] : [state.space && state.space.key];
       // 숨긴(체크 끈) 스페이스도 고를 수 있게 모두 띄움 (흐리게 표시)
       // 연결 안 된 스페이스는 흐리게·못 고름 (툴팁으로 이유)
-      $("ev-add-spaces").innerHTML = schedSpaces().map((sp) => `<label title="${sp.kind === "me" ? "개인" : "팀스페이스"}${spOnline(sp) ? "" : " · 연결되지 않았습니다"}${state.calHidden.has(sp.key) ? " · 달력에서 숨겼습니다" : ""}"${state.calHidden.has(sp.key) || !spOnline(sp) ? ' class="sp-hidden"' : ""}>` +
+      $("ev-add-spaces").innerHTML = schedSpaces().map((sp) => `<label title="${sp.kind === "me" ? "내 PC" : "다른 PC"}${spOnline(sp) ? "" : " · 연결되지 않았습니다"}${state.calHidden.has(sp.key) ? " · 달력에서 숨겼습니다" : ""}"${state.calHidden.has(sp.key) || !spOnline(sp) ? ' class="sp-hidden"' : ""}>` +
         `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) || !spOnline(sp) ? " disabled" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
@@ -1601,6 +1632,7 @@
         document.body.classList.remove("writable");
         connect();
       }
+      if (moved || cfg.spaces) renderSpaceTabs();
       if (moved || cfg.spaces || cfg.calHidden) {
         renderSpaceFilter();
         rebuildSched();

@@ -2,8 +2,10 @@
 노트 서버 (dogani.py 안에서 스레드로 실행)
 
 - 스페이스 폴더(데일리 노트 YYMMDD 요일.md + 일정 파일)를 감시하다가 변경되면 SSE 로 창에 푸시
-- 개인 스페이스 /api/* : 같은 PC(나)에서 온 요청만 (남에게 공유하지 않음)
-- 팀스페이스 /api/team/* : 이 PC 가 팀 호스트일 때 팀원(토큰)에게 공개, 쓰기는 perm=write 팀원만 (team.can_write)
+- 스페이스 /api/s/<스페이스id>/* : 이 PC 에서 연 스페이스(폴더)마다 하나. 같은 PC(나)는 항상 주인,
+  다른 PC 는 그 스페이스의 팀원 토큰이 있어야 하고 쓰기는 perm=write 팀원만 (team.can_write).
+  팀원이 없는 스페이스는 다른 PC 에 열리지 않음 (= 예전 개인 스페이스)
+- /api/join : 초대장 코드로 참여 (코드가 어느 스페이스 것인지 서버가 찾음), /api/me : 토큰으로 스페이스 찾기
 """
 import datetime as dt
 import json
@@ -18,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import schedule
 
-from team import NAME_MAX, TeamError
+from team import FAIL_LIMIT, FAIL_LOCK, NAME_MAX, TeamError
 
 POLL_INTERVAL = 1.0      # 파일 변경 감시 주기(초)
 HEARTBEAT_INTERVAL = 15  # SSE keep-alive 주기(초)
@@ -449,14 +451,7 @@ class Handler(BaseHTTPRequestHandler):
         owner = share.is_owner(ip)
         host = self.headers.get(HOST_HEADER, "")[:64]
         user = unquote(self.headers.get(USER_HEADER, ""))[:NAME_MAX]
-        token = self.headers.get(TOKEN_HEADER, "")
-        member = None
-        team = share.team
-        if token and team:   # 팀 호스트만 토큰을 확인 (내보낸 사람·다시 초대도 바로 반영)
-            mid = team.member(token)
-            if mid:
-                member = (mid, next((m["name"] for m in team.members() if m["id"] == mid), user))
-        return Ctx(ip, host, owner, user, member)
+        return Ctx(ip, host, owner, user, None)
 
     def _body(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -478,10 +473,16 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         qs = parse_qs(url.query)
         try:
-            if url.path.startswith("/api/team/"):
-                self._team(method, url.path[len("/api/team"):], qs, ctx)
-            elif url.path.startswith("/api/"):
-                self._personal(method, url.path[len("/api"):], qs, ctx)
+            parts = url.path.split("/", 4)   # "", "api", "s", id, 나머지
+            if url.path == "/api/join" and method == "POST":
+                self._join(ctx)
+            elif url.path == "/api/me":
+                self._whoami()
+            elif len(parts) >= 4 and parts[1] == "api" and parts[2] == "s":
+                host = self.share.spaces.get(parts[3])
+                if not host:
+                    return self._send_json({"error": "no_space", "message": "이 PC 에 그 스페이스가 없습니다."}, 404)
+                self._space_api(host, method, "/" + (parts[4] if len(parts) > 4 else ""), qs, ctx)
             else:
                 self._send_json({"error": "not found"}, 404)
         except TeamError as e:
@@ -491,34 +492,39 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, ValueError, TypeError, AttributeError):
             self._send_json({"error": "bad request"}, 400)
 
-    # ------------------------------------------------------------ 개인 스페이스 (이 PC 에서만)
-    def _personal(self, method, path, qs, ctx):
+    def _join(self, ctx):
+        """초대장 코드 → 그 코드를 가진 스페이스에 참여 (코드는 60비트 무작위라 스페이스끼리 겹치지 않음)"""
+        body = self._body()
         share = self.share
-        if not ctx.owner:
-            return self._send_json({"error": "private", "message": "개인 스페이스는 공유하지 않습니다."}, 403)
-        if path == "/info":
-            return self._send_json({"app": "dogani", "name": share.name, "pc": share.pc_name,
-                                    "today": dt.date.today().isoformat(), "kind": "personal", "writable": True})
-        if path == "/events":
-            return self._stream(share.hub, ctx)
-        self._space(method, path, qs, share.store, share.hub, writable=True, tasks=True)
+        if ctx.owner:   # 내 스페이스에 내가 참여하면 팀원이 하나 더 생김 (초대장도 써 버림)
+            raise TeamError("own_space", "이 PC 의 스페이스입니다.")
+        share.join_gate.check(ctx.ip)
+        host = next((h for h in list(share.spaces.values()) if h.has_invite(body.get("code"))), None)
+        if not host:
+            share.join_gate.fail(ctx.ip)
+        res = host.join(ctx.ip, body.get("code"), body.get("name"))
+        share.join_gate.ok(ctx.ip)
+        res.update(pub=host.pub, team=host.name, space=host.space_id, pc=share.pc_name)
+        self._send_json(res)
 
-    # ------------------------------------------------------------ 팀스페이스
-    def _team(self, method, path, qs, ctx):
-        team = self.share.team
-        if not team:
-            return self._send_json({"error": "no_team", "message": "이 PC 는 팀 호스트가 아닙니다."}, 404)
-        if method == "POST" and path == "/join":
-            body = self._body()
-            res = team.join(ctx.ip, body.get("code"), body.get("name"))
-            res.update(pub=team.pub, team=team.name)
-            return self._send_json(res)
+    def _whoami(self):
+        """토큰만 아는 예전 설정(스페이스 id 없음)용: 토큰이 맞는 스페이스를 찾아 id 를 알려 줌"""
+        token = self.headers.get(TOKEN_HEADER, "")
+        for host in list(self.share.spaces.values()):
+            if token and host.member(token):
+                return self._send_json({"space": host.space_id, "pub": host.pub, "team": host.name})
+        self._send_json({"error": "not_member", "message": "팀원만 볼 수 있습니다."}, 401)
+
+    # ------------------------------------------------------------ 스페이스 하나 (/api/s/<id>/*)
+    def _space_api(self, team, method, path, qs, ctx):
         if path == "/hello":
             # 토큰 없이 받는 호스트 확인: nonce 에 서명해 줌 → 팀원은 공개키로 확인한 뒤에만 토큰을 보냄
             # (PC 이름으로 바뀐 IP 를 찾을 때 이름을 가로챈 PC 에 토큰을 넘기지 않게)
             return self._send_json({"app": "dogani", "team": team.name, "host": self.share.name, "pub": team.pub,
                                     "sig": team.prove(qs.get("nonce", [""])[0])})
-        mid = ctx.member[0] if ctx.member else (team.owner_id if ctx.owner else None)
+        # 이 PC(주인)는 토큰 없이 관리자, 다른 PC 는 이 스페이스의 토큰으로만 (내보낸 사람·다시 초대도 바로 반영)
+        token = self.headers.get(TOKEN_HEADER, "")
+        mid = team.owner_id if ctx.owner else (team.member(token) if token else None)
         if not mid:
             return self._send_json({"error": "not_member", "message": "팀원만 볼 수 있습니다."}, 401)
         if path == "/me":
@@ -535,19 +541,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"name": name})
         writable = team.can_write(mid)
         if path == "/info":
-            return self._send_json({"app": "dogani", "name": team.name, "kind": "team",
+            return self._send_json({"app": "dogani", "name": team.name, "kind": "space",
                                     "writable": writable, "today": dt.date.today().isoformat()})
         if path == "/events":
             return self._stream(team.hub, ctx)
         if path == "/schedule" and method == "GET":
             return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable,
                                     "decos": team.with_authors(team.store.decorations()),
+                                    "tasks": team.store.dated_tasks(),
                                     "members": [m["name"] for m in team.members()]})   # @멤버 칩 후보
-        self._space(method, path, qs, team.store, team.hub, writable=writable,
-                    stamp=lambda old, new: schedule.stamp(old, new, mid, team.member_ids()))
+        # 팀원이 생긴 뒤부터 새로 쓰거나 고친 줄에 작성자 꼬리표 (혼자 쓰는 동안은 노트가 예전과 같음)
+        stamp = None if team.solo else (lambda old, new: schedule.stamp(old, new, mid, team.member_ids()))
+        self._space(method, path, qs, team.store, team.hub, writable=writable, stamp=stamp)
 
     # ------------------------------------------------------------ 스페이스 공통 (개인·팀)
-    def _space(self, method, path, qs, store, hub, writable, stamp=None, tasks=False):
+    def _space(self, method, path, qs, store, hub, writable, stamp=None):
         if method == "POST":
             if not writable:
                 return self._send_json({"error": "read_only"}, 403)
@@ -576,10 +584,7 @@ class Handler(BaseHTTPRequestHandler):
             d = dt.date.fromisoformat(qs.get("date", [dt.date.today().isoformat()])[0])
             self._send_json(store.note(d))
         elif path == "/schedule":
-            res = {"events": store.schedule(), "decos": store.decorations()}
-            if tasks:   # 개인 스페이스만: 날짜 붙은 할일 (팀스페이스 노트의 할일은 안 보냄)
-                res["tasks"] = store.dated_tasks()
-            self._send_json(res)
+            self._send_json({"events": store.schedule(), "decos": store.decorations()})
         elif path == "/sched-doc":
             self._send_json(store.sched_doc())
         elif path == "/month":
@@ -628,18 +633,43 @@ def local_ip():
         s.close()
 
 
-class ShareServer:
-    """HTTP 서버 + 폴더 감시 (개인 스페이스 + 팀 호스트면 팀스페이스). start() 가 포트를 못 열면 OSError."""
+class JoinGate:
+    """초대장 참여 시도 제한 (IP 마다, 스페이스와 상관없이): FAIL_LIMIT 번 틀리면 FAIL_LOCK 초 잠금"""
 
-    def __init__(self, port, space_dir, name=""):
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.fails = {}   # ip -> [횟수, 잠금 해제 시각]
+
+    def check(self, ip):
+        with self.lock:
+            f = self.fails.get(ip)
+            if f and f[0] >= FAIL_LIMIT and time.time() < f[1]:
+                raise TeamError("locked", f"여러 번 틀려서 {FAIL_LOCK}초 동안 잠겼습니다.", 429)
+
+    def fail(self, ip):
+        with self.lock:
+            f = self.fails.setdefault(ip, [0, 0])
+            if time.time() > f[1]:
+                f[0] = 0
+            f[0] += 1
+            f[1] = time.time() + FAIL_LOCK
+        raise TeamError("bad_code", "초대장 코드가 맞지 않거나 만료됐습니다.\n15분 안에 한 번만 쓸 수 있습니다.", 401)
+
+    def ok(self, ip):
+        with self.lock:
+            self.fails.pop(ip, None)
+
+
+class ShareServer:
+    """HTTP 서버 + 폴더 감시 (이 PC 에서 연 스페이스 여러 개). start() 가 포트를 못 열면 OSError."""
+
+    def __init__(self, port, name=""):
         self.port = port
-        self.store = NoteStore()
-        self.store.set_root(space_dir)
-        self.hub = Hub()
         self.ip = local_ip()
         self.pc_name = socket.gethostname()
         self.name = name or self.pc_name   # 표시 이름 (트레이 > 내 이름)
-        self.team = None          # 팀 호스트면 TeamHost
+        self.spaces = {}          # 스페이스 id -> TeamHost (요청 스레드가 읽으므로 통째로 바꿔 끼움)
+        self.join_gate = JoinGate()
         self.running = False
         self.httpd = None
 
@@ -648,8 +678,17 @@ class ShareServer:
         return f"{self.ip}:{self.port}"
 
     def is_owner(self, ip):
-        """같은 PC 에서 온 요청 = 나 (개인 스페이스는 나만)."""
+        """같은 PC 에서 온 요청 = 나 (모든 스페이스의 주인)."""
         return ip in ("127.0.0.1", "::1", self.ip)
+
+    def add_space(self, host):
+        self.spaces = {**self.spaces, host.space_id: host}
+
+    def remove_space(self, sid):
+        host = self.spaces.get(sid)
+        self.spaces = {k: v for k, v in self.spaces.items() if k != sid}
+        if host:
+            host.hub.broadcast("reload", {})
 
     def start(self):
         Handler.share = self
@@ -666,12 +705,6 @@ class ShareServer:
 
     def _watch_loop(self):
         while self.running:
-            publish(self.store, self.hub)
-            team = self.team
-            if team:
-                publish(team.store, team.hub)
+            for host in list(self.spaces.values()):
+                publish(host.store, host.hub)
             time.sleep(POLL_INTERVAL)
-
-    def set_root(self, path):
-        self.store.set_root(path)
-        self.hub.broadcast("reload", {})

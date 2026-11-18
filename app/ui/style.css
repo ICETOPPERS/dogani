@@ -602,6 +602,15 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .panel-bar .header-title { cursor: move; }
 .panel-bar .header-title.is-today { color: var(--accent); }
 #view-note .progress-row { padding: 8px 14px 2px; }
+.space-tabs[hidden] { display: none; }
+.space-tabs { display: flex; gap: 2px; padding: 6px 10px 0; flex: none; overflow-x: auto; scrollbar-width: none; }
+.space-tab {
+  flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 3px 10px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.space-tab:hover { background: var(--bg-hover); color: var(--text); }
+.space-tab.active { background: var(--bg-hover); color: var(--text); font-weight: 600; }
 #view-note .progress-text:empty { display: none; }
 #view-note .panel-bar, #view-cal .panel-bar { padding-left: 6px; border-bottom: 1px solid var(--border); }
 #note-sched { margin-top: 2px; }

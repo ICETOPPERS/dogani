@@ -49,24 +49,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # exe 면 런처(launcher
 UI_DIR = os.path.join(BASE_DIR, "ui")
 DEFAULT_PORT = 8765
 OPACITY_LEVELS = [100, 90, 80, 70, 60]
-ME = "me"      # 개인 스페이스 키
-TEAM = "team"  # 팀스페이스 키
+ME, TEAM = "me", "team"   # v26.11.18 이전 스페이스 키 (설정 옮기기에만 씀)
 TEAM_POLL_MS = 20_000
 
 TEAM_STATUS = {"online": "연결됨", "offline": "호스트 연결 끊김", "logged_out": "다시 로그인 필요"}
 
-EMPTY_TEAM = {"host": "", "pc": "", "token": "", "id": "", "pub": "", "team": "", "members": []}
 DEFAULT_CONFIG = {
     "port": DEFAULT_PORT,
-    "space_dir": "",          # 지금 연 개인 스페이스 (폴더)
-    "space_dirs": [],         # 최근 연 스페이스 (최근 것 먼저)
-    "space_names": {},        # 폴더 -> 붙인 이름 (없으면 폴더명)
+    # 스페이스 목록: 내 PC 폴더 {"kind": "local", "id", "dir", "name"} |
+    #               다른 PC 에 참여 {"kind": "join", "id", "host", "pc", "token", "mid", "pub", "name"}
+    "spaces": [],
+    "space": "",          # 할일 창에서 보고 있는 스페이스 id
     "name": "",           # 내 이름 (팀원에게 보이는 이름)
-    "team": dict(EMPTY_TEAM),
-    "team_host": False,   # 이 PC 가 팀 호스트
-    "team_space_dir": "",     # 팀 호스트일 때 팀스페이스 폴더
-    "space": ME,          # 지금 보고 있는 스페이스 (me | team)
-    "cal_hidden": [],     # 달력·할일 일정에서 숨긴 스페이스 키·"#태그" ("#" = 태그 없는 일정)
+    "cal_hidden": [],     # 달력·할일 일정에서 숨긴 스페이스 id·"#태그" ("#" = 태그 없는 일정)
     "windows": {},        # note / cal -> {"pos", "panel", "open"}
     "on_top": False,      # False: 바탕화면에 고정 (Win+D 에도 남아 있음)
     "opacity": 100,
@@ -81,8 +76,6 @@ def load_config():
     if saved is None:
         saved = migrate_old_config()
     cfg.update(saved)
-    cfg["team"] = {**EMPTY_TEAM, **(cfg.get("team") or {})}
-    cfg["team"].pop("secret", None)   # 예전 HMAC 비밀키 (위조에 쓰일 수 있어 폐기)
     migrate_windows(cfg)
     # v26.11.17 이전: 네비게이션 바 + "dogani 표시"(전체 숨김) → 트레이에서 할일·달력 창을 하나씩 켬
     cfg["windows"].pop("nav", None)
@@ -94,25 +87,46 @@ def load_config():
         # 새 exe 는 두 키를 같게 저장 → 다르면 예전 exe 가 고친 것이므로 예전 키가 최신
         if old in cfg:
             cfg[new] = cfg.pop(old)
-    if not isinstance(cfg.get("space_names"), dict):
-        cfg["space_names"] = {}
     if not isinstance(cfg.get("cal_hidden"), list):
         cfg["cal_hidden"] = []
     # v26.11.10 이전: todo 폴더 + 내 노트 공유(일시 중지·차단·팀원 전용·주소 추가) → 스페이스, 공유 없음
     old_dir = cfg.pop("todo_dir", "")
-    if old_dir and not cfg["space_dir"]:
+    if old_dir and not cfg.get("space_dir"):
         cfg["space_dir"] = old_dir
     for k in ("paused", "team_only", "blocked", "servers"):
         cfg.pop(k, None)
-    if cfg["team_host"] and not cfg["team_space_dir"]:
-        cfg["team_space_dir"] = LEGACY_TEAM_SPACE
-    if cfg["space"] not in (ME, TEAM):
-        cfg["space"] = ME
-    if cfg["space_dir"] and cfg["space_dir"] not in cfg["space_dirs"]:
-        cfg["space_dirs"].insert(0, cfg["space_dir"])
+    migrate_spaces(cfg)
+    if not isinstance(cfg.get("spaces"), list):
+        cfg["spaces"] = []
+    cfg["spaces"] = [e for e in cfg["spaces"] if isinstance(e, dict) and e.get("kind") in ("local", "join")
+                     and (e.get("dir") if e["kind"] == "local" else e.get("host") and e.get("token"))]
     if not cfg["name"]:
         cfg["name"] = clean_name(socket.gethostname() or os.environ.get("USERNAME"))   # 처음엔 PC 이름
     return cfg
+
+
+def migrate_spaces(cfg):
+    """v26.11.18 이전: 개인 스페이스 하나 + 팀(호스트 또는 참여) 하나 → 스페이스 목록.
+    id 는 폴더를 열 때(내 PC) 또는 호스트에 물어서(참여) 채움. legacy = 예전 키(me | team): 보던 스페이스·숨김 옮기기용"""
+    # 예전 키는 지우지 않음: 같은 PC 에서 예전 exe 를 켜도(업데이트 전·소스 실행과 번갈아) 예전 그대로 동작. 모두 업데이트된 뒤 지워도 됨
+    old = {k: cfg[k] for k in ("space_dir", "space_dirs", "space_names", "team", "team_host", "team_space_dir")
+           if k in cfg}
+    if not old or cfg.get("spaces"):
+        return
+    spaces = []
+    names = old.get("space_names") if isinstance(old.get("space_names"), dict) else {}
+    if old.get("space_dir"):
+        d = old["space_dir"]
+        spaces.append({"kind": "local", "dir": d, "name": space.space_name(d, names), "legacy": ME})
+    t = old.get("team") if isinstance(old.get("team"), dict) else {}
+    if old.get("team_host"):
+        d = old.get("team_space_dir") or LEGACY_TEAM_SPACE
+        if not any(e.get("dir") == d for e in spaces):
+            spaces.append({"kind": "local", "dir": d, "name": t.get("team") or "", "legacy": TEAM})
+    elif t.get("token") and t.get("host") and not t["host"].startswith("127."):
+        spaces.append({"kind": "join", "id": "", "host": t["host"], "pc": t.get("pc", ""), "token": t["token"],
+                       "mid": t.get("id", ""), "pub": t.get("pub", ""), "name": t.get("team", ""), "legacy": TEAM})
+    cfg["spaces"] = spaces
 
 
 def migrate_windows(cfg):
@@ -143,8 +157,7 @@ def migrate_old_config():
     return cfg
 
 
-# 예전 이름(볼트)도 같이 저장: 같은 PC 에서 예전 exe 를 켜도(업데이트 전·소스 실행과 번갈아) 폴더·팀스페이스를 잃지 않게
-# (team_vault 를 잃으면 예전 exe 가 기본 폴더로 호스트를 켜 새 키 → 팀원 전원 로그아웃). 모두 업데이트된 뒤 지워도 됨
+# v26.11.17 이전 볼트(vault) 이름 → 스페이스 (읽을 때만 바꿈)
 LEGACY_KEYS = (("vault", "space_dir"), ("vaults", "space_dirs"), ("team_vault", "team_space_dir"))
 
 
@@ -152,12 +165,8 @@ def save_config(cfg):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     tmp = CONFIG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({**cfg, **{old: cfg.get(new) for old, new in LEGACY_KEYS}}, f, ensure_ascii=False, indent=2)
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
     os.replace(tmp, CONFIG_PATH)
-
-
-def remember_space_dir(cfg, path):
-    cfg["space_dirs"] = ([path] + [v for v in cfg["space_dirs"] if os.path.normcase(v) != os.path.normcase(path)])[:RECENT_MAX]
 
 
 def normalize_server(text):
@@ -170,15 +179,15 @@ def normalize_server(text):
 
 
 # ---------------------------------------------------------------- http (팀 호스트와 통신)
-def host_proof(addr, pub):
-    """토큰 없이 addr 이 공개키 pub 의 팀 호스트인지 확인 (호스트가 nonce 에 서명) → (확인됨, HTTP 상태, 응답)
+def host_proof(addr, pub, sid):
+    """토큰 없이 addr 이 공개키 pub 인 스페이스 sid 의 호스트인지 확인 (호스트가 nonce 에 서명) → (확인됨, HTTP 상태, 응답)
     공개키는 누구나 되돌려 줄 수 있으므로 pub 비교가 아니라 서명으로 확인한다"""
     nonce = secrets.token_hex(16)
-    status, res = http_json(addr, f"/api/team/hello?nonce={nonce}")
+    status, res = http_json(addr, f"/api/s/{sid}/hello?nonce={nonce}")
     return status == 200 and bool(pub) and verify_hello(pub, nonce, res.get("sig", "")), status, res
 
 
-def find_host(pc, host, pub):
+def find_host(pc, host, pub, sid):
     """호스트 IP 가 바뀌었을 때: PC 이름으로 새 IP 를 찾아(같은 망) 같은 팀 호스트(서명 확인)면 → 새 주소, 없으면 None"""
     port = host.rsplit(":", 1)[-1]
     try:
@@ -187,7 +196,7 @@ def find_host(pc, host, pub):
         return None
     for ip in ips:
         alt = f"{ip}:{port}"
-        if alt != host and host_proof(alt, pub)[0]:
+        if alt != host and host_proof(alt, pub, sid)[0]:
             return alt
     return None
 
@@ -356,114 +365,86 @@ class Tray(QObject):
         # pystray 는 콜백 인자 개수(0~2개)를 검사하므로 기본값 인자를 쓰면 안 된다
         return lambda icon, item: self.command.emit(name, arg)
 
-    def space_items(self):
-        Item = pystray.MenuItem
-        cfg = self.app.cfg
-        items = [Item(f"{space.space_name(v, cfg['space_names'])}  ({v})", self.emit("switch_space_dir", v),
-                      checked=lambda i, v=v: v == cfg["space_dir"], radio=True)
-                 for v in cfg["space_dirs"]]
-        if items:
-            items.append(pystray.Menu.SEPARATOR)
-        items += [Item("이름 바꾸기...", self.emit("rename_space"), enabled=bool(cfg["space_dir"])),
-                  Item("폴더 열기 (탐색기)", self.emit("open_dir"), enabled=bool(cfg["space_dir"])),
-                  Item("스페이스 열기...", self.emit("browse_dir"))]
-        if len(cfg["space_dirs"]) > 1:
-            items.append(Item("최근 목록 정리 (지금 스페이스만 남김)", self.emit("clear_space_dirs")))
-        return items
+    @staticmethod
+    def left_text(sec):
+        """초대장 남은 시간: 1분 넘으면 분, 1분 이하면 mm:ss"""
+        return f"{sec // 60}분 남음" if sec > 60 else f"{sec // 60:02d}:{sec % 60:02d} 남음"
 
-    def member_items(self):
+    def local_menu(self, sid):
+        """내 PC 스페이스: 초대장 · 이름 · 폴더 / 번호 슬롯(나·팀원·초대장) / 닫기"""
         Item = pystray.MenuItem
-        team = self.app.share.team if self.app.share else None
-        if not team:
-            return [Item("(없음)", None, enabled=False)]
-        items = []
-        for m in team.members():
+        host = self.app.local_host(sid)
+        if not host:
+            return [Item("폴더를 열지 못했습니다", None, enabled=False),
+                    Item("대상 폴더 변경하기...", self.emit("change_dir", sid)),
+                    pystray.Menu.SEPARATOR,
+                    Item("스페이스 닫기", self.emit("close_space", sid))]
+        invites = host.invites()
+        items = [Item("새 초대장 만들기", self.emit("new_invite", sid)),
+                 Item("이름 바꾸기...", self.emit("rename_space", sid)),
+                 Item("탐색기에서 보기", self.emit("open_dir", sid)),
+                 Item("대상 폴더 변경하기...", self.emit("change_dir", sid)),
+                 pystray.Menu.SEPARATOR]
+        n = 0
+        for m in host.members():
+            n += 1
             if m["admin"]:
-                items.append(Item(f"{m['name']}  - 관리자(이 PC)", None, enabled=False))
+                items.append(Item(f"{n}  {m['name']} (나)", None, enabled=False))
                 continue
-            state = "접속 중" if m["online"] else "꺼짐"
             ro = m["perm"] == "read"
-            items.append(Item(f"{m['name']}  - {state}{', 읽기만' if ro else ''}", pystray.Menu(
-                Item("편집 허용", self.emit("perm", (m["id"], "write" if ro else "read")), checked=lambda _, ro=ro: not ro),
-                Item("다시 초대 (PC 바꿈, 초대장 복사)", self.emit("reinvite", m["id"])),
-                Item("팀에서 내보내기", self.emit("kick", m["id"])),
-            )))
-        return items
+            sub = [Item("편집 허용", self.emit("perm", (sid, m["id"], "write" if ro else "read")),
+                        checked=lambda _, ro=ro: not ro),
+                   Item("다시 초대", self.emit("reinvite", (sid, m["id"])))]
+            sub += [Item(f"다시 초대 {i['code']} 지우기 ({self.left_text(i['left'])})",
+                         self.emit("cancel_invite", (sid, i["code"])))
+                    for i in invites if i.get("mid") == m["id"]]
+            sub.append(Item("내보내기", self.emit("kick", (sid, m["id"]))))
+            items.append(Item(f"{n}  {m['name']}", pystray.Menu(*sub)))
+        for i in invites:
+            if i.get("mid"):
+                continue
+            n += 1
+            items.append(Item(f"{n}  {i['code']} ({self.left_text(i['left'])})",
+                              self.emit("ask_cancel_invite", (sid, i["code"]))))
+        return items + [pystray.Menu.SEPARATOR, Item("스페이스 닫기", self.emit("close_space", sid))]
 
-    def invite_items(self):
-        Item = pystray.MenuItem
-        team = self.app.share.team if self.app.share else None
-        invites = team.invites() if team else []
-        if not invites:
-            return [Item("(없음)", None, enabled=False)]
-        return [Item(f"{i['code']}  - {i['label']}, {max(1, i['left'] // 60)}분 남음", pystray.Menu(
-                    Item("복사", self.emit("copy_invite", i["code"])),
-                    Item("폐기", self.emit("cancel_invite", i["code"])),
-                )) for i in invites]
-
-    def team_menu(self):
+    def join_menu(self, sid):
+        """다른 PC 스페이스: 연결 상태 · 호스트 주소 / 번호 슬롯(보기만) / 나가기"""
         Item = pystray.MenuItem
         app = self.app
-        t = app.cfg["team"]
-        if app.share and app.share.team:
-            team = app.share.team
-            return pystray.Menu(
-                Item("새 팀원 초대장 만들기 (15분, 복사됨)", self.emit("new_invite")),
-                Item("초대장 관리", pystray.Menu(lambda: self.invite_items())),
-                Item(f"호스트 주소 {app.share.address}  (클릭 시 복사)", self.emit("copy_address")),
-                pystray.Menu.SEPARATOR,
-                Item("팀원", pystray.Menu(lambda: self.member_items())),
-                Item("팀 이름 바꾸기...", self.emit("rename_team")),
-                Item(f"팀스페이스 폴더 열기 ({team.root})", self.emit("open_team_dir")),
-                Item("팀스페이스 폴더 바꾸기... (팀원 그대로)", self.emit("start_host")),
-                pystray.Menu.SEPARATOR,
-                Item("팀 호스트 끄기", self.emit("stop_host")),
-            )
-        if t.get("token"):
-            return pystray.Menu(
-                Item(f"호스트 {t['host']}  - {TEAM_STATUS.get(app.team_status, '')}", None, enabled=False),
-                Item("호스트 주소 바꾸기... (호스트 IP 가 바뀌었을 때)", self.emit("change_host")),
-                Item("초대장으로 다시 참여...", self.emit("join_team")),
-                pystray.Menu.SEPARATOR,
-                Item("팀 나가기 (이 PC 에서 로그아웃)", self.emit("leave_team")),
-            )
-        return pystray.Menu(
-            Item("팀 참여... (초대장)", self.emit("join_team")),
-            pystray.Menu.SEPARATOR,
-            Item("이 PC 를 팀 호스트로 (팀스페이스 폴더 고르기)...", self.emit("start_host"), enabled=bool(app.share)),
-        )
+        e = app.entry(sid) or {}
+        items = [Item(TEAM_STATUS.get(app.join_status.get(sid, "offline"), ""), None, enabled=False),
+                 Item("호스트 주소 바꾸기...", self.emit("change_host", sid)),
+                 Item("초대장으로 다시 참여하기...", self.emit("join_space")),
+                 pystray.Menu.SEPARATOR]
+        for n, m in enumerate(e.get("members") or [], 1):
+            me = " (나)" if m.get("id") == e.get("mid") else ""
+            items.append(Item(f"{n}  {m.get('name', '')}{me}", None, enabled=False))
+        return items + [pystray.Menu.SEPARATOR, Item("스페이스에서 나가기", self.emit("leave_space", sid))]
 
-    def view_items(self):
-        """보고 있는 스페이스 고르기 (팀에 있을 때만: 개인 하나뿐이면 고를 게 없음)"""
+    def space_list(self):
+        """스페이스 제목 + 스페이스 이름들 (각각 설정 하위 메뉴). 보기 전환은 할일 창 위 탭에서 함"""
         Item = pystray.MenuItem
-        spaces = self.app.spaces()
-        if len(spaces) < 2:
-            return []
-        cur = self.app.current_space()["key"]
-        label = {TEAM: "팀스페이스 보기", ME: "개인 스페이스 보기"}
-        return [Item(f"{label.get(s['key'], '보기')}: {s['name']}", self.emit("select_space", s["key"]),
-                     checked=lambda i, k=s["key"], c=cur: k == c, radio=True) for s in spaces] + [pystray.Menu.SEPARATOR]
+        app = self.app
+        items = [Item("스페이스", None, enabled=False)]
+        for sp in app.spaces():
+            sid = sp["key"]
+            sub = (lambda sid=sid: self.local_menu(sid)) if sp["kind"] == "me" else (lambda sid=sid: self.join_menu(sid))
+            items.append(Item(sp["name"], pystray.Menu(sub),
+                              checked=lambda i, sid=sid: app.current_space()["key"] == sid))
+        return items + [Item("스페이스 만들기...", self.emit("create_space"), enabled=bool(app.share)),
+                        Item("다른 스페이스에 참여하기...", self.emit("join_space"))]
 
     def build_menu(self):
         Item = pystray.MenuItem
         app, cfg = self.app, self.app.cfg
-        share = app.share
-        space_label = f"개인: {space.space_name(cfg['space_dir'], cfg['space_names'])}" if cfg["space_dir"] else "개인: (안 열림)"
-        if share and share.team:
-            team_label = f"팀스페이스: {share.team.name} (호스트)"
-        elif cfg["team"].get("token"):
-            team_label = f"팀스페이스: {cfg['team'].get('team') or '팀'} ({TEAM_STATUS.get(app.team_status, '')})"
-        else:
-            team_label = "팀스페이스: 참여 안 함"
         return [
             Item("할일 표시", self.emit("toggle_panel", "note"), checked=lambda i: "note" in app.panels, default=True),
             Item("달력 표시", self.emit("toggle_panel", "cal"), checked=lambda i: "cal" in app.panels),
             pystray.Menu.SEPARATOR,
-            *self.view_items(),
-            Item(f"내 이름: {cfg['name']}", pystray.Menu(Item("이름 바꾸기...", self.emit("rename")))),
-            Item(team_label, self.team_menu()),
+            Item(f"내 이름: {cfg['name']}", self.emit("rename")),
             pystray.Menu.SEPARATOR,
-            Item(space_label, pystray.Menu(lambda: self.space_items())),
+            *self.space_list(),
             pystray.Menu.SEPARATOR,
             Item("바탕화면에 고정", self.emit("set_on_top", False), checked=lambda i: not cfg["on_top"], radio=True),
             Item("항상 위에 표시", self.emit("set_on_top", True), checked=lambda i: cfg["on_top"], radio=True),
@@ -483,7 +464,7 @@ class Tray(QObject):
         share = self.app.share
         self.icon.icon = make_icon_image(ICON_COLORS["on" if share else "off"])
         if share:
-            self.icon.title = f"dogani {liveupdate.version_text()} - {space.space_name(self.app.cfg['space_dir'], self.app.cfg['space_names'])}"
+            self.icon.title = f"dogani {liveupdate.version_text()} - {self.app.current_space()['name']}"
         else:
             self.icon.title = f"dogani - 포트 {self.app.cfg['port']} 사용 중 (스페이스를 열 수 없음)"
 
@@ -518,8 +499,8 @@ class TeamDialog(QDialog):
         form.addRow("내 이름", name_label)
         layout = QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(QLabel("초대장은 관리자가 사람마다 따로 만들어 줍니다. (15분 안에 한 번만 쓸 수 있음)\n"
-                                "PC 를 바꿨으면 관리자에게 '다시 초대'를 부탁하세요."))
+        layout.addWidget(QLabel("초대장은 스페이스 주인이 사람마다 따로 만들어 줍니다.\n"
+                                "15분 안에 한 번만 쓸 수 있습니다. PC 를 바꿨으면 주인에게 다시 초대를 부탁해 주세요."))
         self.error = QLabel()
         self.error.setStyleSheet("color: #c0392b")
         layout.addWidget(self.error)
@@ -604,6 +585,10 @@ class Bridge(QObject):
     def setStatus(self, key, status):
         if status in ("online", "offline", "blocked"):
             self.win.app.on_status(key, status)
+
+    @Slot(str)
+    def selectSpace(self, key):
+        self.win.app.select_space(key)
 
     @Slot()
     def closePanel(self):
@@ -700,8 +685,14 @@ class ClientHeaders(QWebEngineUrlRequestInterceptor):
             info.setHttpHeader(KEY_HEADER.encode(), CLIENT_KEY.encode())
             info.setHttpHeader(HOST_HEADER.encode(), self.host)
             info.setHttpHeader(USER_HEADER.encode(), quote(cfg["name"]).encode())
-            if cfg["team"].get("token"):
-                info.setHttpHeader(TOKEN_HEADER.encode(), cfg["team"]["token"].encode())
+            # 토큰은 그 스페이스의 호스트 주소·경로로 가는 요청에만 (다른 스페이스·다른 PC 로 새지 않게)
+            url = info.requestUrl()
+            addr, path = f"{url.host()}:{url.port()}".lower(), url.path()   # QUrl 은 호스트 이름을 소문자로 줌
+            for e in cfg["spaces"]:
+                if (e["kind"] == "join" and e.get("id") and e["host"].lower() == addr
+                        and path.startswith(f"/api/s/{e['id']}/")):
+                    info.setHttpHeader(TOKEN_HEADER.encode(), e["token"].encode())
+                    break
 
 
 class Page(QWebEnginePage):
@@ -976,8 +967,8 @@ class doganiApp(QObject):
         self.cfg = cfg
         self.status = {}     # 스페이스 키 -> 창에서 알려 준 연결 상태
         self.panels = {}     # "note" | "cal" -> Overlay (트레이에서 켜고 끔)
-        self.team_status = "offline"
-        self.team_polling = False
+        self.join_status = {}   # 참여 스페이스 id -> online | offline | logged_out
+        self.polling = set()    # 확인 중인 참여 스페이스 (id, id 모르면 토큰)
         self.save_timer = QTimer(self, singleShot=True, interval=800, timeout=lambda: save_config(self.cfg))
         # 모니터 연결/해제: Windows 가 창을 밀어 놓은 뒤 각 창을 기억한 모니터 기준 위치로 되돌림
         self.screens_changing = False
@@ -987,15 +978,14 @@ class doganiApp(QObject):
         qapp.primaryScreenChanged.connect(self.on_screens_changed)
         setup_profile(self)
 
-        self.open_space_meta(cfg["space_dir"])
-        self.share = ShareServer(cfg["port"], cfg["space_dir"], cfg["name"])
+        self.share = ShareServer(cfg["port"], cfg["name"])
         try:
             self.share.start()
         except OSError:
             self.share = None
-        if self.share and cfg["team_host"]:
-            self.start_host(quiet=True)
-        self.apply_team_auth()
+        for e in [e for e in cfg["spaces"] if e["kind"] == "local"]:
+            self.open_local(e)
+        self.fix_current()
 
         self.tray = Tray(self)
         self.tray.command.connect(self.on_command)
@@ -1022,30 +1012,184 @@ class doganiApp(QObject):
     def windows(self):
         return list(self.panels.values())
 
-    def in_team(self):
-        return bool(self.cfg["team"].get("token"))
+    # ------------------------------------------------------------ spaces
+    def entry(self, sid):
+        return next((e for e in self.cfg["spaces"] if e.get("id") == sid), None) if sid else None
 
-    # ------------------------------------------------------------ spaces (팀 / 내)
+    def local_host(self, sid):
+        return self.share.spaces.get(sid) if self.share and sid else None
+
+    def joins(self):
+        return [e for e in self.cfg["spaces"] if e["kind"] == "join"]
+
     def spaces(self):
-        cfg, t = self.cfg, self.cfg["team"]
+        """창에 보내는 스페이스 목록 (내 PC 것 먼저). kind: me = 내 PC 폴더, team = 다른 PC 에 참여"""
         out = []
-        if self.in_team():
-            out.append({"key": TEAM, "group": "team", "name": t.get("team") or "팀스페이스", "server": t["host"],
-                        "prefix": "/api/team", "kind": "team",
-                        "status": (self.status.get(TEAM) or "online") if self.team_status == "online" else
-                        ("blocked" if self.team_status == "logged_out" else "offline")})
-        out.append({"key": ME, "group": "me", "name": space.space_name(cfg["space_dir"], cfg["space_names"]) or cfg["name"],
-                    "server": f"127.0.0.1:{cfg['port']}",
-                    "prefix": "/api", "kind": "me", "status": "online" if self.share else "offline",
-                    "sub": "" if self.share else "포트 사용 중"})
-        for s in out:
-            s["status"] = s.get("status") or "offline"
+        for e in self.cfg["spaces"]:
+            sid = e.get("id")
+            if not sid:
+                continue
+            if e["kind"] == "local":
+                host = self.local_host(sid)
+                out.append({"key": sid, "name": host.name if host else (e.get("name") or os.path.basename(e["dir"])),
+                            "server": f"127.0.0.1:{self.cfg['port']}", "prefix": f"/api/s/{sid}", "kind": "me",
+                            "status": "online" if host else "offline", "sub": "" if host else "폴더 없음"})
+            else:
+                st = self.join_status.get(sid, "offline")
+                out.append({"key": sid, "name": e.get("name") or "스페이스", "server": e["host"],
+                            "prefix": f"/api/s/{sid}", "kind": "team",
+                            "status": (self.status.get(sid) or "online") if st == "online" else
+                            ("blocked" if st == "logged_out" else "offline")})
         return out
 
     def current_space(self):
         spaces = self.spaces()
-        cur = next((s for s in spaces if s["key"] == self.cfg["space"] and not s.get("disabled")), None)
-        return cur or next(s for s in spaces if s["key"] == ME)
+        cur = next((s for s in spaces if s["key"] == self.cfg["space"]), None)
+        return cur or (spaces[0] if spaces else
+                       {"key": "", "name": "스페이스 없음", "server": f"127.0.0.1:{self.cfg['port']}",
+                        "prefix": "/api/s/_", "kind": "me", "status": "offline", "sub": "스페이스 없음"})
+
+    def fix_current(self):
+        """보던 스페이스가 없어졌으면 첫 스페이스로"""
+        if not any(s["key"] == self.cfg["space"] for s in self.spaces()):
+            first = self.spaces()
+            if first and self.cfg["space"] not in (ME, TEAM):   # 예전 키는 id 를 알 때까지 기다림
+                self.cfg["space"] = first[0]["key"]
+
+    def got_id(self, e):
+        """스페이스 id 를 알게 됨 → 예전 키(me | team)로 기억한 보기·숨김을 id 로 옮김"""
+        old = e.pop("legacy", None)
+        if not old:
+            return
+        if self.cfg["space"] == old:
+            self.cfg["space"] = e["id"]
+        self.cfg["cal_hidden"] = [e["id"] if k == old else k for k in self.cfg["cal_hidden"]]
+        self.save_later()
+
+    def open_local(self, e, quiet=True):
+        """내 PC 스페이스 폴더 열기 → TeamHost 또는 None (폴더가 없으면 목록에 남겨 두고 '폴더 없음')"""
+        if not self.share:
+            return None
+        d = e["dir"]
+        if not os.path.isdir(d):
+            if not quiet:
+                QMessageBox.warning(None, APP_NAME, f"폴더가 없습니다.\n{d}")
+            return None
+        legacy = TEAM_DIR if os.path.normcase(os.path.abspath(d)) == os.path.normcase(os.path.abspath(LEGACY_TEAM_SPACE)) else None
+        new = not os.path.exists(os.path.join(space.meta_dir(d), "team.json"))
+        try:
+            host = TeamHost(d, TEAM_DIR, self.cfg["name"], legacy_dir=legacy)
+        except OSError as ex:
+            if not quiet:
+                QMessageBox.warning(None, APP_NAME, f"스페이스를 열지 못했습니다.\n{ex}")
+            return None
+        other = self.entry(host.space_id)
+        if other is not None and other is not e:   # 폴더를 복사해 같은 id 가 둘
+            if not quiet:
+                QMessageBox.warning(None, APP_NAME, "이미 열려 있는 스페이스와 같은 스페이스입니다.\n"
+                                    "폴더를 복사했다면 복사본의 .dogani 폴더를 지운 뒤 다시 열어 주세요.")
+            return None
+        if new and not legacy:
+            host.rename_team(e.get("name") or os.path.basename(os.path.normpath(d)))
+        e["id"] = host.space_id
+        e["name"] = host.name   # 폴더가 없을 때 보일 이름
+        self.share.add_space(host)
+        owner = next((m for m in host.members() if m["admin"]), None)
+        if owner and owner["name"] != self.cfg["name"]:
+            try:
+                host.update_profile(owner["id"], self.cfg["name"])
+            except TeamError:
+                pass
+        self.got_id(e)
+        return host
+
+    def pick_dir(self, title, own=None):
+        """내 PC 스페이스로 쓸 폴더 고르기 → 경로 또는 "" (다른 내 스페이스와 겹치면 안 됨: 노트가 섞임). own = 폴더를 바꾸는 그 스페이스"""
+        start = (own or {}).get("dir") or os.path.expanduser("~")
+        while True:
+            path = QFileDialog.getExistingDirectory(None, title, start)
+            if not path:
+                return ""
+            path = os.path.normpath(path)
+            clash = next((x["dir"] for x in self.cfg["spaces"] if x["kind"] == "local" and x is not own
+                          and overlaps(path, x["dir"])), None)
+            if not clash:
+                return path
+            QMessageBox.warning(None, APP_NAME, f"이미 연 스페이스와 겹치는 폴더입니다.\n{clash}\n\n다른 폴더를 골라 주세요.")
+            start = path
+
+    def create_space(self):
+        path = self.pick_dir("스페이스로 쓸 폴더 선택  예) 폴더/2026.11/261102 월.md")
+        if not path:
+            return
+        e = {"kind": "local", "dir": path}
+        host = self.open_local(e, quiet=False)
+        if not host:
+            return
+        self.cfg["spaces"].append(e)
+        self.select_space(host.space_id)
+        save_config(self.cfg)
+        self.tray.update()
+
+    def change_dir(self, sid):
+        """폴더 바꾸기: 예전 폴더의 .dogani(id·팀원)를 새 폴더로 옮김 → 팀원 토큰 그대로. 노트는 옮기지 않음"""
+        e = self.entry(sid)
+        if not e or e["kind"] != "local":
+            return
+        old = e["dir"]
+        path = self.pick_dir("스페이스 폴더 변경 (팀원은 그대로입니다)", e)
+        if not path or os.path.normcase(path) == os.path.normcase(old):
+            return
+        had_meta = os.path.isdir(space.meta_dir(old)) and not os.path.exists(space.meta_dir(path))
+        if os.path.isdir(old) and not self.carry_team_meta(old, path):
+            return
+        self.share.remove_space(sid)
+        e["dir"] = path
+        if not self.open_local(e, quiet=False):
+            e["dir"] = old
+            if had_meta and not os.path.exists(space.meta_dir(old)):   # 옮긴 .dogani 를 되돌림 (안 그러면 새 스페이스 = 팀원 모두 로그아웃)
+                try:
+                    shutil.move(space.meta_dir(path), space.meta_dir(old))
+                except OSError:
+                    pass
+            self.open_local(e)
+        self.fix_current()
+        save_config(self.cfg)
+        self.push_spaces()
+        self.tray.update()
+
+    def close_space(self, sid):
+        e = self.entry(sid)
+        if not e:
+            return
+        host = self.local_host(sid)
+        msg = "이 스페이스를 목록에서 닫을까요?\n폴더와 노트는 그대로 남습니다."
+        if host and not host.solo:
+            msg += "\n닫는 동안 팀원은 이 스페이스를 볼 수 없습니다."
+        if QMessageBox.question(None, APP_NAME, msg) != QMessageBox.StandardButton.Yes:
+            return
+        if self.share:
+            self.share.remove_space(sid)
+        self.cfg["spaces"].remove(e)
+        self.fix_current()
+        save_config(self.cfg)
+        self.push_spaces()
+        self.tray.update()
+
+    def select_space(self, key):
+        if key == self.cfg["space"] or not any(s["key"] == key for s in self.spaces()):
+            return
+        self.cfg["space"] = key
+        self.save_later()
+        self.push_spaces()
+        self.tray.update()
+
+    def on_status(self, key, status):
+        if self.status.get(key) == status:
+            return
+        self.status[key] = status
+        for win in self.windows():
+            win.push_config(spaces=self.spaces())
 
     def js_common(self):
         # spaces = 달력에 같이 그릴 수 있는 스페이스 전부 (일정 팝업의 스페이스 선택에도 씀)
@@ -1057,20 +1201,6 @@ class doganiApp(QObject):
         for win in self.panels.values():
             win.push_config(**common)
 
-    def select_space(self, key):
-        if key == self.cfg["space"]:
-            return
-        self.cfg["space"] = key
-        self.save_later()
-        self.push_spaces()
-
-    def on_status(self, key, status):
-        if self.status.get(key) == status:
-            return
-        self.status[key] = status
-        for win in self.windows():
-            win.push_config(spaces=self.spaces())
-
     def set_cal_hidden(self, keys):
         """달력·할일 창에서 숨길 스페이스 (창 하나에서 바꾸면 다른 창도 따라감)"""
         self.cfg["cal_hidden"] = [k for k in keys if isinstance(k, str)][:100]  # 스페이스 키 + 숨긴 태그("#태그", "#" = 태그 없음)
@@ -1078,230 +1208,190 @@ class doganiApp(QObject):
         for win in self.panels.values():
             win.push_config(calHidden=self.cfg["cal_hidden"])
 
-    # ------------------------------------------------------------ team (client)
-    def apply_team_auth(self):
-        if self.share:
-            self.share.name = self.cfg["name"]
-
+    # ------------------------------------------------------------ 참여 스페이스 (다른 PC)
     def poll_team(self):
-        t = self.cfg["team"]
-        if not t.get("token") or self.team_polling:
+        for e in self.joins():
+            self.poll_join(e)
+
+    def poll_join(self, e):
+        key = e.get("id") or e["token"]
+        if key in self.polling:
             return
-        self.team_polling = True
-        host, token, name, pc, pub = t["host"], t["token"], self.cfg["name"], t.get("pc", ""), t.get("pub", "")
-        own = self.cfg["team_host"]
+        self.polling.add(key)
+        host, token, name, pc, pub, sid = e["host"], e["token"], self.cfg["name"], e.get("pc", ""), e.get("pub", ""), e.get("id")
 
         def work():
             status, res = 0, {}
             try:
-                status, res = http_json(host, "/api/team/me", token=token, name=name)
-                if status == 0 and pc and not own:
-                    alt = find_host(pc, host, pub)   # 서명으로 같은 팀 호스트임을 확인한 주소에만 토큰을 보냄
+                if not sid:   # 예전 설정: 토큰으로 스페이스 id 를 물음
+                    status, res = http_json(host, "/api/me", token=token, name=name)
+                    if status == 200 and res.get("space"):
+                        found = res["space"]
+                        status, res = http_json(host, f"/api/s/{found}/me", token=token, name=name)
+                        res["_space"] = found
+                    return
+                status, res = http_json(host, f"/api/s/{sid}/me", token=token, name=name)
+                if status == 0 and pc:
+                    alt = find_host(pc, host, pub, sid)   # 서명으로 같은 호스트임을 확인한 주소에만 토큰을 보냄
                     if alt:
-                        s2, r2 = http_json(alt, "/api/team/me", token=token, name=name)
+                        s2, r2 = http_json(alt, f"/api/s/{sid}/me", token=token, name=name)
                         if s2 == 200:   # 아니면 원래 결과(연결 안 됨) 그대로
                             status, res = 200, {**r2, "_host": alt}
-            finally:   # 무슨 일이 있어도 결과를 보냄 (안 그러면 team_polling 이 안 풀려 다시 확인을 안 함)
-                self.team_result.emit(status, {**res, "_polled": (host, token)})
+            finally:   # 무슨 일이 있어도 결과를 보냄 (안 그러면 polling 이 안 풀려 다시 확인을 안 함)
+                self.team_result.emit(status, {**res, "_polled": (key, host, token)})
 
         threading.Thread(target=work, daemon=True).start()
 
     def on_team_result(self, status, res):
-        self.team_polling = False
-        t = self.cfg["team"]
-        if not t.get("token"):
+        key, host, token = res["_polled"]
+        self.polling.discard(key)
+        e = next((x for x in self.joins() if (x.get("id") or x["token"]) == key), None)
+        if not e:
             return
-        if res.get("_polled") != (t["host"], t["token"]):
-            return self.poll_team()   # 확인하는 사이 주소를 바꿨거나 다시 참여함 → 지난 결과는 버리고 다시
-        self.apply_team_result(status, res)
+        if (e["host"], e["token"]) != (host, token):
+            return self.poll_join(e)   # 확인하는 사이 주소를 바꿨거나 다시 참여함 → 지난 결과는 버리고 다시
+        if not e.get("id"):
+            if not res.get("_space"):
+                if status in (401, 404):   # 내보내졌거나 호스트가 예전 버전: 목록에서 빼고 알림 (안 그러면 안 보이는 채로 계속 확인)
+                    self.cfg["spaces"].remove(e)
+                    self.save_later()
+                    self.tray.notify("예전 팀 참여 정보로 다시 연결하지 못했습니다.\n초대장으로 다시 참여해 주세요.")
+                return
+            if self.entry(res["_space"]):   # 이미 목록에 있음 (다시 참여함)
+                self.cfg["spaces"].remove(e)
+                return self.save_later()
+            e["id"] = res["_space"]
+            self.got_id(e)
+        self.apply_join_result(e, status, res)
 
-    def apply_team_result(self, status, res):
-        t = self.cfg["team"]
-        prev = self.team_status
+    def apply_join_result(self, e, status, res):
+        sid = e["id"]
+        prev = self.join_status.get(sid)
         if status == 200:
             if res.get("_host"):   # PC 이름으로 바뀐 IP 를 찾음
-                t["host"] = res["_host"]
-                self.tray.notify(f"팀 호스트의 주소가 바뀌어 {t['host']} 로 다시 연결했습니다.")
-            t["pc"] = res.get("pc") or t.get("pc", "")
-            self.team_status = "online"
-            t["members"] = res.get("members") or []
-            t["pub"] = res.get("pub") or t.get("pub", "")
-            t["team"] = res.get("team") or t["team"]
-            me = res.get("me")
-            if me and me.get("name") and me["name"] != self.cfg["name"]:
-                self.cfg["name"] = me["name"]   # 다른 PC 에서 바꾼 이름
+                e["host"] = res["_host"]
+                self.tray.notify(f"{e.get('name') or '스페이스'} 호스트의 주소가 바뀌어 {e['host']} 로 다시 연결했습니다.")
+            e["pc"] = res.get("pc") or e.get("pc", "")
+            self.join_status[sid] = "online"
+            e["members"] = res.get("members") or []
+            e["pub"] = res.get("pub") or e.get("pub", "")
+            e["name"] = res.get("team") or e.get("name", "")
+            me = res.get("me") or {}
+            if me.get("name") and me["name"] != self.cfg["name"]:
+                self.sync_name(e)
         elif status == 401:
-            self.team_status = "logged_out"
+            self.join_status[sid] = "logged_out"
             if prev != "logged_out":
-                self.tray.notify("팀 로그인이 풀렸습니다. (내보내졌거나 다른 PC 로 다시 초대됨)\n관리자에게 초대장을 받아 다시 참여하세요.")
+                self.tray.notify(f"{e.get('name') or '스페이스'} 로그인이 풀렸습니다.\n"
+                                 "내보내졌거나 다른 PC 로 다시 초대됐습니다. 주인에게 초대장을 받아 다시 참여해 주세요.")
         else:
-            self.team_status = "offline"
-        self.apply_team_auth()
+            self.join_status[sid] = "offline"
+        self.fix_current()
         self.save_later()
         self.push_spaces()
 
-    def team_request(self, host, path, body):
-        """대화상자에서 쓰는 동기 요청 → (성공 여부, 응답 또는 오류 문구)"""
-        status, res = http_json(host, path, body, token=self.cfg["team"].get("token", ""), name=self.cfg["name"])
-        return self.team_request_result(host, status, res)
+    def sync_name(self, e):
+        """참여 스페이스의 내 이름을 '내 이름'에 맞춤 (꺼져 있던 동안 바꾼 이름도 다음 연결 때). 겹치면 한 번 알림"""
+        key = ("name", e["id"])
+        if key in self.polling:
+            return
+        self.polling.add(key)
+        host, token, sid, name = e["host"], e["token"], e["id"], self.cfg["name"]
+
+        def done(result):
+            self.polling.discard(key)
+            if result and result[0] == 409 and e.get("name_clash") != name:
+                e["name_clash"] = name
+                self.tray.notify(f"{e.get('name') or '스페이스'}: {result[1].get('message', '이름이 겹칩니다.')}")
+
+        self.run_bg(lambda: http_json(host, f"/api/s/{sid}/profile", {"name": name}, token=token, name=name), done)
 
     @staticmethod
     def team_request_result(host, status, res):
         if status == 200:
             return True, res
         if status == 0:
-            return False, f"{host} 에 연결할 수 없습니다. 주소와 호스트 PC 의 dogani 가 켜져 있는지 확인하세요."
-        if res.get("error") == "no_team":
-            return False, "그 PC 는 팀 호스트가 아닙니다."
+            return False, f"{host} 에 연결하지 못했습니다.\n주소와 그 PC 의 dogani 가 켜져 있는지 확인해 주세요."
+        if status == 404:
+            return False, "그 PC 에 이 스페이스가 없습니다.\n주인에게 확인해 주세요."
         return False, res.get("message") or f"실패했습니다. (HTTP {status})"
 
-    def set_session(self, host, res):
-        self.cfg["team"] = {**EMPTY_TEAM, "host": host, "token": res["token"], "id": res["id"],
-                            "pub": res.get("pub", ""), "team": res.get("team", "")}
-        self.cfg["name"] = res.get("name") or self.cfg["name"]
-        self.team_status = "online"
-        self.apply_team_auth()
-        save_config(self.cfg)
-        self.poll_team()
-        self.push_spaces()
-        if hasattr(self, "tray"):   # 시작할 때(트레이 만들기 전) 호스트를 여는 경우
-            self.tray.update()
-
-    def join_team(self):
-        t = self.cfg["team"]
-        dlg = TeamDialog("" if t.get("host", "").startswith("127.") else t.get("host", ""), self.cfg["name"])
+    def join_space(self):
+        last = next((e["host"] for e in reversed(self.joins())), "")
+        dlg = TeamDialog(last, self.cfg["name"])
+        joined = {}
 
         def handler(d):
             host = normalize_server(d.host.text())
             name = self.cfg["name"]
             while True:
-                status, res = http_json(host, "/api/team/join", {"code": d.code.text(), "name": name})
+                status, res = http_json(host, "/api/join", {"code": d.code.text(), "name": name})
                 if status != 409 or res.get("error") != "name_taken":
                     break
                 # 이름이 겹치면 그 자리에서 다른 이름을 물어 같은 초대장으로 다시 시도
-                name, ok = QInputDialog.getText(d, "이름이 겹침", res.get("message", "") + "\n\n팀에서 쓸 다른 이름:",
+                name, ok = QInputDialog.getText(d, "이름이 겹침", res.get("message", "") + "\n\n이 스페이스에서 쓸 다른 이름:",
                                                 QLineEdit.EchoMode.Normal, name)
                 name = clean_name(name) if ok else ""
                 if not name:
-                    return "취소했습니다. (초대장은 15분 안에 다시 쓸 수 있음)"
+                    return "취소했습니다.\n초대장은 15분 안에 다시 쓸 수 있습니다."
             ok, res = self.team_request_result(host, status, res)
             if not ok:
                 return res
-            self.set_session(host, res)
+            sid = res.get("space")
+            if not sid:
+                return "그 PC 의 dogani 가 예전 버전입니다.\n업데이트한 뒤 다시 시도해 주세요."
+            e = self.entry(sid)
+            if self.local_host(sid) or (e is not None and e["kind"] != "join"):
+                return "이 PC 의 스페이스입니다."
+            if e is None:
+                e = {"kind": "join", "id": sid}
+                self.cfg["spaces"].append(e)
+            e.update(host=host, pc=res.get("pc", ""), token=res["token"], mid=res["id"],
+                     pub=res.get("pub", ""), name=res.get("team", ""))
+            self.join_status[sid] = "online"
+            joined["e"] = e
             return None
 
         dlg.handler = handler
-        if dlg.exec():
-            self.tray.notify(f"{self.cfg['team'].get('team') or '팀'}에 {self.cfg['name']}(으)로 들어왔습니다.")
+        if dlg.exec() and joined:
+            e = joined["e"]
+            save_config(self.cfg)
+            self.poll_join(e)
+            self.select_space(e["id"])
+            self.push_spaces()
+            self.tray.update()
+            self.tray.notify(f"{e.get('name') or '스페이스'}에 들어왔습니다.")
 
-    def leave_team(self):
-        if QMessageBox.question(None, APP_NAME, "이 PC 에서 팀 로그아웃할까요?\n"
-                                "팀원 목록은 유지되며, 다시 참여하려면 관리자의 초대장이 필요합니다.") != QMessageBox.StandardButton.Yes:
+    def leave_space(self, sid):
+        e = self.entry(sid)
+        if not e or QMessageBox.question(None, APP_NAME, "이 스페이스에서 나갈까요?\n"
+                                         "다시 들어오려면 주인의 초대장이 필요합니다.") != QMessageBox.StandardButton.Yes:
             return
-        self.cfg["team"] = dict(EMPTY_TEAM)
-        self.cfg["space"] = ME
-        self.apply_team_auth()
+        self.cfg["spaces"].remove(e)
+        self.join_status.pop(sid, None)
+        self.fix_current()
+        save_config(self.cfg)
         self.push_spaces()
+        self.tray.update()
 
-    # ------------------------------------------------------------ team (host)
-    def pick_team_space_dir(self):
-        """팀스페이스로 쓸 폴더 고르기 → 경로 또는 "" (개인 스페이스와 겹치면 안 됨: 개인 노트가 팀에 공개됨)"""
-        start = self.cfg["team_space_dir"] or (LEGACY_TEAM_SPACE if os.path.isdir(LEGACY_TEAM_SPACE) else os.path.expanduser("~"))
-        while True:
-            path = QFileDialog.getExistingDirectory(None, "팀스페이스 폴더 선택 (팀원 모두에게 공개·편집됨)", start)
-            if not path:
-                return ""
-            path = os.path.normpath(path)
-            mine = self.cfg["space_dir"]
-            if mine and overlaps(path, mine):
-                QMessageBox.warning(None, APP_NAME, "개인 스페이스와 겹치는 폴더는 팀스페이스로 쓸 수 없습니다.\n"
-                                    "(개인 스페이스 노트가 팀원에게 공개됨) 따로 빈 폴더를 만들어 고르세요.")
-                start = path
-                continue
-            return path
-
+    # ------------------------------------------------------------ 내 PC 스페이스
     def carry_team_meta(self, old, new):
-        """팀스페이스 폴더를 바꿀 때 예전 폴더의 .dogani(스페이스 id·팀원 목록)를 새 폴더로 옮김
+        """스페이스 폴더를 바꿀 때 예전 폴더의 .dogani(스페이스 id·팀원 목록)를 새 폴더로 옮김
         → 같은 id = 같은 서명 키 = 팀원 토큰 그대로. 노트 파일은 옮기지 않음. 진행하면 True"""
-        if not old or os.path.normcase(os.path.abspath(old)) == os.path.normcase(os.path.abspath(new)):
-            return True
         src, dst = space.meta_dir(old), space.meta_dir(new)
         if not os.path.isdir(src):
             return True
         if os.path.exists(dst):
             return QMessageBox.question(
                 None, APP_NAME, f"새 폴더에 이미 다른 스페이스 정보(.dogani)가 있습니다.\n{new}\n\n"
-                "이대로 열면 그 폴더의 팀(또는 새 팀)이 되어, 지금 팀원은 모두 초대장으로 다시 참여해야 합니다.\n"
+                "이대로 열면 그 폴더의 스페이스가 되어, 지금 팀원은 모두 초대장으로 다시 참여해야 합니다.\n"
                 "계속할까요?") == QMessageBox.StandardButton.Yes
         try:
             shutil.move(src, dst)
         except OSError as e:
-            QMessageBox.warning(None, APP_NAME, f"팀 정보(.dogani)를 새 폴더로 옮기지 못했습니다.\n{e}")
+            QMessageBox.warning(None, APP_NAME, f"스페이스 정보(.dogani)를 새 폴더로 옮기지 못했습니다.\n{e}")
             return False
         return True
-
-    def start_host(self, quiet=False):
-        if not self.share:
-            return
-        root = self.cfg["team_space_dir"]
-        if not quiet:
-            hosting = bool(self.share.team)
-            if self.in_team() and not hosting and QMessageBox.question(
-                    None, APP_NAME, "지금 들어가 있는 팀에서 로그아웃하고 이 PC 를 새 팀의 호스트로 만들까요?"
-            ) != QMessageBox.StandardButton.Yes:
-                return
-            old = root
-            root = self.pick_team_space_dir()
-            if not root or not self.carry_team_meta(old, root):
-                return
-        if self.cfg["space_dir"] and overlaps(root, self.cfg["space_dir"]):
-            QMessageBox.warning(None, APP_NAME, "개인 스페이스와 겹치는 폴더는 팀스페이스로 열 수 없습니다.\n"
-                                f"팀스페이스: {root}\n개인 스페이스: {self.cfg['space_dir']}")
-            return
-        if quiet and not os.path.isdir(root):
-            # 폴더가 옮겨졌거나 드라이브가 아직 안 붙음 → 새로 만들면 새 스페이스 id·새 키 = 팀원 모두 로그아웃. 켜지 않고 알림
-            QMessageBox.warning(None, APP_NAME, f"팀스페이스 폴더가 없어 팀 호스트를 켜지 않았습니다.\n{root}\n\n"
-                                "폴더를 되돌린 뒤 다시 실행하거나, 트레이 > 팀스페이스 에서 다시 고르세요.")
-            return
-        # 예전 팀 데이터(team\team.json)는 예전 공용 노트 폴더를 팀스페이스로 열 때만 가져옴 (노트와 팀원이 갈라지지 않게)
-        legacy = TEAM_DIR if os.path.normcase(os.path.abspath(root)) == os.path.normcase(os.path.abspath(LEGACY_TEAM_SPACE)) else None
-        try:
-            os.makedirs(root, exist_ok=True)
-            host = TeamHost(root, TEAM_DIR, self.cfg["name"], legacy_dir=legacy)
-        except OSError as e:
-            QMessageBox.warning(None, APP_NAME, f"팀스페이스를 열 수 없습니다.\n{e}")
-            return
-        prev = self.share.team
-        self.share.team = host
-        if prev:   # 폴더 바꾸기: 예전 폴더를 보던 팀원 창이 새 폴더로 다시 읽게
-            prev.hub.broadcast("reload", {})
-        self.cfg["team_host"] = True
-        self.cfg["team_space_dir"] = root
-        owner = next(m for m in host.members() if m["id"] == host.owner_id)
-        self.cfg["name"] = owner["name"]
-        self.set_session(f"127.0.0.1:{self.cfg['port']}",
-                         {"token": host.owner_token(), "id": host.owner_id, "pub": host.pub,
-                          "team": host.name, "name": owner["name"]})
-        if not quiet:
-            QMessageBox.information(
-                None, APP_NAME,
-                f"팀 호스트를 열었습니다.\n\n팀원 초대: 트레이 > 팀스페이스 > 새 팀원 초대장 만들기\n"
-                f"  → 호스트 주소({self.share.address})와 초대장 코드가 복사되니 그 사람에게 보내 주세요.\n"
-                "  (사람마다 하나씩, 15분 안에 한 번만 쓸 수 있음)\n\n"
-                "이 PC 가 꺼져 있으면 팀스페이스를 볼 수 없으니, 켜 두는 시간이 긴 PC 를 추천합니다.")
-
-    def stop_host(self):
-        if QMessageBox.question(None, APP_NAME, "팀 호스트를 끌까요?\n팀원들은 팀스페이스를 볼 수 없게 됩니다.\n"
-                                f"(팀스페이스 {self.cfg['team_space_dir']} 와 키는 남아 있어서 다시 켜면 그대로 돌아옵니다.)"
-                                ) != QMessageBox.StandardButton.Yes:
-            return
-        if self.share:
-            self.share.team = None
-        self.cfg["team_host"] = False
-        self.cfg["team"] = dict(EMPTY_TEAM)
-        self.cfg["space"] = ME
-        self.apply_team_auth()
-        self.push_spaces()
 
     def rename(self):
         name, ok = QInputDialog.getText(None, "내 이름", "팀원에게 보이는 이름 (최대 20자)",
@@ -1309,73 +1399,71 @@ class doganiApp(QObject):
         name = clean_name(name) if ok else ""
         if not name or name == self.cfg["name"]:
             return
-        if self.in_team() and self.team_status != "logged_out":   # 로그인 풀렸으면 이 PC 이름만 바꿈
-            ok, res = self.team_request(self.cfg["team"]["host"], "/api/team/profile", {"name": name})
-            if not ok:
-                QMessageBox.warning(None, APP_NAME, res)
+        for host in (self.share.spaces.values() if self.share else ()):
+            try:
+                host.update_profile(host.owner_id, name)
+            except TeamError as ex:
+                QMessageBox.warning(None, APP_NAME, f"{host.name}: {ex.message}")
                 return
-            name = res.get("name", name)
         self.cfg["name"] = name
-        self.apply_team_auth()
-        self.poll_team()
+        if self.share:
+            self.share.name = name
+        self.poll_team()   # 참여 스페이스 이름은 연결 확인 결과에서 맞춤 (sync_name)
         self.push_spaces()
         self.tray.update()
 
-    def rename_space(self):
-        root = self.cfg["space_dir"]
-        if not root:
+    def rename_space(self, sid):
+        host = self.local_host(sid)
+        if not host:
             return
-        text, ok = QInputDialog.getText(None, "개인 스페이스 이름", "이름 (비우면 폴더명)",
-                                        QLineEdit.EchoMode.Normal, space.space_name(root, self.cfg["space_names"]))
-        if not ok:
+        text, ok = QInputDialog.getText(None, "스페이스 이름", "이름", QLineEdit.EchoMode.Normal, host.name)
+        if not ok or not clean_name(text):
             return
-        name = clean_name(text)
-        if name and name != space.space_name(root):
-            self.cfg["space_names"][root] = name
-        else:
-            self.cfg["space_names"].pop(root, None)
+        host.rename_team(text)
+        self.entry(sid)["name"] = host.name
+        host.hub.broadcast("schedule", {})   # 팀원 화면도 /me 로 새 이름을 받음
         self.save_later()
         self.push_spaces()
         self.tray.update()
 
-    def change_host(self):
-        """호스트 IP 가 바뀌었을 때 주소만 바꿈 (토큰 그대로). 같은 팀 호스트(공개키 일치)일 때만 바꿈"""
-        t = self.cfg["team"]
-        if not t.get("token"):
+    def change_host(self, sid):
+        """호스트 IP 가 바뀌었을 때 주소만 바꿈 (토큰 그대로). 같은 호스트(서명 확인)일 때만 바꿈"""
+        e = self.entry(sid)
+        if not e or e["kind"] != "join":
             return
         text, ok = QInputDialog.getText(None, "호스트 주소", "호스트 PC 의 새 주소 (예: 192.168.0.12:8765)",
-                                        QLineEdit.EchoMode.Normal, t["host"])
+                                        QLineEdit.EchoMode.Normal, e["host"])
         host = normalize_server(text) if ok else ""
-        if not host or host == t["host"]:
+        if not host or host == e["host"]:
             return
-        token, pub, name = t["token"], t.get("pub", ""), self.cfg["name"]
+        token, pub, name = e["token"], e.get("pub", ""), self.cfg["name"]
 
         def work():   # 주소가 틀리면 몇 초 걸리므로 작업 스레드에서 (트레이·창이 멈추지 않게)
-            proven, status, res = host_proof(host, pub)
+            proven, status, res = host_proof(host, pub, sid)
             if status != 200:
                 return status, res, False
-            if not proven:   # 서명이 안 맞음 = 다른 팀 (예전 버전 호스트도 서명이 없어 여기로). 토큰은 안 보냄
+            if not proven:   # 서명이 안 맞음 = 다른 스페이스. 토큰은 안 보냄
                 return status, res, True
-            return *http_json(host, "/api/team/me", token=token, name=name), False
+            return *http_json(host, f"/api/s/{sid}/me", token=token, name=name), False
 
         def done(result):
-            if self.cfg["team"].get("token") != token:   # 그 사이 팀을 나갔거나 다시 참여함
+            if self.entry(sid) is not e or e["token"] != token:   # 그 사이 나갔거나 다시 참여함
                 return
             if result is None:
-                return QMessageBox.warning(None, APP_NAME, "호스트를 확인하다 오류가 났습니다. 다시 시도하세요.")
+                return QMessageBox.warning(None, APP_NAME, "호스트를 확인하지 못했습니다.\n다시 시도해 주세요.")
             status, res, other = result
             if other:
-                return QMessageBox.warning(None, APP_NAME, "그 주소는 우리 팀 호스트로 확인되지 않습니다.\n"
-                                           "다른 팀의 호스트이거나, 호스트 PC 의 dogani 가 예전 버전입니다.")
+                return QMessageBox.warning(None, APP_NAME, "그 주소는 이 스페이스의 호스트로 확인되지 않습니다.\n"
+                                           "다른 PC 이거나, 그 PC 의 dogani 가 예전 버전입니다.")
             if status == 401:
                 return QMessageBox.warning(None, APP_NAME, "그 호스트가 이 PC 를 팀원으로 인정하지 않습니다.\n"
-                                           "내보내진 상태입니다. 초대장으로 다시 참여하세요.")
+                                           "초대장으로 다시 참여해 주세요.")
             if status != 200:
                 return QMessageBox.warning(None, APP_NAME, self.team_request_result(host, status, res)[1])
-            self.cfg["team"]["host"] = host
+            e["host"] = host
             save_config(self.cfg)
-            # team_polling 은 건드리지 않음: 옛 주소로 확인 중이던 결과는 on_team_result 가 버리고 새 주소로 다시 확인
-            self.apply_team_result(status, res)
+            # polling 은 건드리지 않음: 옛 주소로 확인 중이던 결과는 on_team_result 가 버리고 새 주소로 다시 확인
+            self.apply_join_result(e, status, res)
             self.tray.notify(f"호스트 주소를 {host} 로 바꿨습니다.")
 
         self.run_bg(work, done)
@@ -1458,112 +1546,67 @@ class doganiApp(QObject):
         self.poll_team()
         if not self.share:
             self.tray.notify(f"포트 {self.cfg['port']}이(가) 사용 중이라 스페이스를 열 수 없습니다.\n"
-                             "예전 버전 dogani 가 켜져 있다면 종료하고 다시 실행하세요.")
-        elif not self.cfg["space_dir"]:
-            QTimer.singleShot(500, self.browse_dir)
+                             "예전 버전 dogani 가 켜져 있다면 종료하고 다시 실행해 주세요.")
+        elif not self.cfg["spaces"]:
+            QTimer.singleShot(500, self.create_space)
 
     # ------------------------------------------------------------ actions
-    def open_space_meta(self, path):
-        """스페이스 표시(.dogani/space.json) 만들기. 폴더가 없으면(USB·네트워크 드라이브 등) 조용히 넘어감"""
-        try:
-            return space.open_space(path) if path else None
-        except OSError:
-            return None
-
-    def browse_dir(self):
-        path = QFileDialog.getExistingDirectory(
-            None, "스페이스 열기 (노트 폴더)  예) 폴더/2026.11/261102 월.md",
-            self.cfg["space_dir"] or os.path.expanduser("~"))
-        if path:
-            self.switch_space_dir(os.path.normpath(path))
-
-    def switch_space_dir(self, path):
-        team_root = self.share.team.root if self.share and self.share.team else ""
-        if team_root and overlaps(path, team_root):
-            QMessageBox.warning(None, APP_NAME, "팀스페이스와 겹치는 폴더는 개인 스페이스로 열 수 없습니다.\n"
-                                "(팀스페이스는 트레이에서 팀스페이스 보기를 고르세요)")
-            return
-        if not os.path.isdir(path):
-            if QMessageBox.question(None, APP_NAME, f"폴더가 없습니다.\n{path}\n\n최근 목록에서 지울까요?"
-                                    ) == QMessageBox.StandardButton.Yes:
-                self.cfg["space_dirs"] = [v for v in self.cfg["space_dirs"] if os.path.normcase(v) != os.path.normcase(path)]
-                save_config(self.cfg)
-            return
-        self.open_space_meta(path)
-        remember_space_dir(self.cfg, path)
-        if path != self.cfg["space_dir"]:
-            self.cfg["space_dir"] = path
-            self.cfg["space"] = ME
-            if self.share:
-                self.share.set_root(path)
-            self.push_spaces()
-            self.tray.update()
-        save_config(self.cfg)
+    def space_command(self, name, host, rest):
+        """내 PC 스페이스의 초대장·팀원 명령 (트레이)"""
+        if name in ("new_invite", "reinvite", "copy_invite"):
+            try:
+                code = rest[0] if name == "copy_invite" else host.create_invite(rest[0] if name == "reinvite" else None)
+            except TeamError as e:
+                return self.tray.notify(e.message)
+            QGuiApplication.clipboard().setText(f"dogani 스페이스 참여\n호스트 주소: {self.share.address}\n초대장 코드: {code}")
+            self.tray.notify(f"초대장 {code} 를 복사했습니다.\n15분 안에 한 번만 쓸 수 있습니다. 메신저로 그 사람에게 보내 주세요.")
+        elif name == "cancel_invite":
+            host.cancel_invite(rest[0])
+        elif name == "ask_cancel_invite":
+            if QMessageBox.question(None, APP_NAME, f"초대장 {rest[0]} 을(를) 삭제할까요?") == QMessageBox.StandardButton.Yes:
+                host.cancel_invite(rest[0])
+        elif name == "kick":
+            m = next((m for m in host.members() if m["id"] == rest[0]), None)
+            if m and QMessageBox.question(None, APP_NAME, f"{m['name']} 님을 이 스페이스에서 내보낼까요?") == QMessageBox.StandardButton.Yes:
+                host.kick(rest[0])
+        elif name == "perm":
+            try:
+                host.set_perm(*rest)
+            except TeamError as e:
+                self.tray.notify(e.message)
 
     def on_command(self, name, arg):
         cfg = self.cfg
         share = self.share
-        team = share.team if share else None
         if name == "toggle_panel":
             self.toggle_panel(arg)
         elif name == "select_space":
             self.select_space(arg)
         elif name == "rename":
             self.rename()
-        elif name == "rename_space":
-            self.rename_space()
+        elif name == "create_space":
+            self.create_space()
+        elif name == "join_space":
+            self.join_space()
+        elif name == "leave_space":
+            self.leave_space(arg)
         elif name == "change_host":
-            self.change_host()
-        elif name == "join_team":
-            self.join_team()
-        elif name == "leave_team":
-            self.leave_team()
-        elif name == "start_host":
-            self.start_host()
-        elif name == "stop_host":
-            self.stop_host()
-        elif name in ("new_invite", "reinvite", "copy_invite") and team:
-            try:
-                code = arg if name == "copy_invite" else team.create_invite(arg if name == "reinvite" else None)
-            except TeamError as e:
-                return self.tray.notify(e.message)
-            if all(i["code"] != code for i in team.invites()):
-                return self.tray.notify("만료됐거나 폐기된 초대장입니다. 새로 만드세요.")
-            QGuiApplication.clipboard().setText(f"dogani 팀 참여\n호스트 주소: {self.share.address}\n초대장 코드: {code}")
-            if name != "copy_invite":
-                self.tray.notify(f"초대장 {code} 를 복사했습니다. (15분 안에 한 번만 사용)\n메신저로 그 사람에게 붙여 넣어 보내세요.")
-        elif name == "cancel_invite" and team:
-            team.cancel_invite(arg)
-        elif name == "rename_team" and team:
-            text, ok = QInputDialog.getText(None, "팀 이름", "팀스페이스 이름", QLineEdit.EchoMode.Normal, team.name)
-            if ok and clean_name(text):
-                team.rename_team(text)
-                self.poll_team()
-        elif name == "open_team_dir" and team:
-            os.startfile(team.notes_dir)
-        elif name == "kick" and team:
-            m = next((m for m in team.members() if m["id"] == arg), None)
-            if m and QMessageBox.question(None, APP_NAME, f"{m['name']} 님을 팀에서 내보낼까요?") == QMessageBox.StandardButton.Yes:
-                team.kick(arg)
-                self.poll_team()
-        elif name == "perm" and team:
-            try:
-                team.set_perm(*arg)
-            except TeamError as e:
-                return self.tray.notify(e.message)
-            self.poll_team()
-        elif name == "copy_address" and share:
-            QGuiApplication.clipboard().setText(share.address)
+            self.change_host(arg)
+        elif name == "close_space":
+            self.close_space(arg)
+        elif name == "change_dir":
+            self.change_dir(arg)
+        elif name == "rename_space":
+            self.rename_space(arg)
         elif name == "open_dir":
-            if cfg["space_dir"] and os.path.isdir(cfg["space_dir"]):
-                os.startfile(cfg["space_dir"])
-        elif name == "browse_dir":
-            self.browse_dir()
-        elif name == "switch_space_dir":
-            self.switch_space_dir(arg)
-        elif name == "clear_space_dirs":
-            cfg["space_dirs"] = [cfg["space_dir"]] if cfg["space_dir"] else []
-            cfg["space_names"] = {k: v for k, v in cfg["space_names"].items() if k in cfg["space_dirs"]}
+            e = self.entry(arg)
+            if e and e["kind"] == "local" and os.path.isdir(e["dir"]):
+                os.startfile(e["dir"])
+        elif name in ("new_invite", "reinvite", "copy_invite", "cancel_invite", "ask_cancel_invite", "kick", "perm"):
+            sid, *rest = arg if isinstance(arg, tuple) else (arg,)
+            host = self.local_host(sid)
+            if host:
+                self.space_command(name, host, rest)
         elif name == "set_on_top":
             cfg["on_top"] = arg
             for ov in self.windows():
@@ -1613,8 +1656,9 @@ def main():
 
     cfg = load_config()
     if args.dir:
-        cfg["space_dir"] = os.path.abspath(args.dir)
-        remember_space_dir(cfg, cfg["space_dir"])
+        d = os.path.normpath(os.path.abspath(args.dir))
+        if not any(e.get("dir") == d for e in cfg["spaces"]):
+            cfg["spaces"].append({"kind": "local", "dir": d})
     if args.port:
         cfg["port"] = args.port
     if args.name and clean_name(args.name):

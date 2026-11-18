@@ -118,7 +118,9 @@ class TeamHost:
         from server import Hub, NoteStore  # 순환 import 방지
         self.lock = threading.Lock()
         self.root = self.notes_dir = root
+        fresh = not any(n != space.META_DIR for n in os.listdir(root))   # 새로 만든 빈 폴더
         meta = space.open_space(root)
+        self.space_id = meta["id"]
         self.path = os.path.join(space.meta_dir(root), "team.json")
         self.key_path = os.path.join(key_dir, f"{meta['id']}.json")
         self.data = self._load(legacy_dir)
@@ -127,7 +129,7 @@ class TeamHost:
         self.pub = public_key(self.data["sign_key"])
         self.fails = {}   # ip -> [횟수, 잠금 해제 시각]
         self.proofs = []  # 최근 호스트 확인 서명 시각 (prove 횟수 제한)
-        if not any(f.endswith("일정.md") for f in os.listdir(root)):
+        if fresh:   # 빈 폴더에만 예시 일정 파일 (이미 쓰던 노트 폴더에는 파일을 만들지 않음)
             with open(os.path.join(root, "일정.md"), "w", encoding="utf-8") as f:
                 f.write(SCHEDULE_SEED)
         self.store = NoteStore()
@@ -186,6 +188,18 @@ class TeamHost:
             with self.lock:
                 self.data["name"] = name
                 self._save()
+
+    @property
+    def solo(self):
+        """팀원 없이 나 혼자 (다른 PC 에 열리지 않고, 일정 줄에 작성자 꼬리표를 붙이지 않음)"""
+        with self.lock:
+            return len(self.data["members"]) <= 1
+
+    def has_invite(self, code):
+        code = normalize_invite(code)
+        with self.lock:
+            v = self.data["invites"].get(code)
+            return bool(v) and v.get("exp", 0) > time.time()
 
     # -- members
     def _find_name(self, name):
@@ -282,7 +296,7 @@ class TeamHost:
             out = []
             for c, v in self.data["invites"].items():
                 m = self.data["members"].get(v.get("mid") or "")
-                out.append({"code": format_invite(c), "left": int(v["exp"] - now),
+                out.append({"code": format_invite(c), "left": int(v["exp"] - now), "mid": v.get("mid") or "",
                             "label": f"{m['name']} 다시 초대" if m else "새 팀원"})
         return sorted(out, key=lambda i: i["left"])
 
