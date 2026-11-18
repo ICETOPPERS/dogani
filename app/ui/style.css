@@ -613,7 +613,6 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
   height: 38px;
   box-sizing: border-box;
 }
-.panel-bar .close-btn { font-size: 13px; color: var(--text-muted); width: 26px; }
 .panel-bar .header-title { cursor: move; }
 .panel-bar .header-title.is-today { color: var(--accent); }
 #view-note .progress-row { padding: 8px 14px 2px; height: 18px; box-sizing: content-box; }   /* 할일 수 글자·노트가 없어도 높이 같게 */
@@ -632,7 +631,6 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 #note-sched { margin-top: 2px; }
 
 /* 스페이스 표시: 일정 앞 색 막대 (스페이스가 둘 이상 보일 때만), 달력 위 스페이스 체크 */
-:root { --sp-me: #8b93a1; }
 .cal-filters { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 0; }
 /* 필터 자리: 기본은 달력 위, .cal-side 면 오른쪽 세로 사이드바 (버튼 #cal-layout) */
 .cal-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -661,8 +659,13 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .cal-spaces label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .cal-spaces label { padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); }
 .cal-spaces label:has(input:checked) { color: var(--text); }
-.cal-spaces label:not(:has(input:checked)) i { opacity: .25; }
+.cal-spaces label:not(:has(input:checked)) { opacity: .5; }
 .cal-spaces input { display: none; }
+/* 스페이스 칩 = 할일 창 스페이스 탭(.space-tab)과 같은 모양: 켜진 것만 배경·굵게 (태그·멤버 알약과는 다르게) */
+#cal-spaces { gap: 2px; }
+#cal-spaces label { padding: 3px 10px; border: 0; border-radius: 6px; font-size: 12px; color: var(--text-muted); opacity: 1 !important; }
+#cal-spaces label:hover { background: var(--bg-hover); color: var(--text); }
+#cal-spaces label:has(input:checked) { background: var(--bg-hover); color: var(--text); font-weight: 600; }
 .cal-tags label.no-tag { border-color: transparent; padding: 1px 4px; font-size: 10px; }
 .cal-tags label.no-tag:not(:has(input:checked)) { text-decoration: line-through; }
 /* 멤버 칩: 스페이스 실제 멤버 = 옅은 배경, 일정에만 적힌 이름 = 점선 테두리 */
@@ -673,22 +676,22 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 /* 달력 일정 정보 카드: 달력보다 한 단계 큰 글자, Ctrl+휠과 상관없이 고정 크기 */
 .ev-tagtip {
   position: fixed; z-index: 40; pointer-events: none;
-  min-width: 160px; max-width: 300px; padding: 12px;  /* 일정 팝업(.ev-add)과 같은 여백 */
-  display: flex; flex-direction: column; gap: 3px;
+  min-width: 160px; max-width: 300px; padding: 16px 18px;  /* 일정 팝업(.ev-add)과 같은 여백 */
+  display: flex; flex-direction: column; gap: 8px;
   font-size: 13px; color: var(--text); background: var(--bg-solid);
   border: 1px solid var(--border); border-radius: 6px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
 }
 .ev-tagtip[hidden] { display: none; }
-.ev-tagtip .tc-date { font-size: 12px; color: var(--text-muted); margin-bottom: 3px; }
+.ev-tagtip .tc-date { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
 .ev-tagtip .tc-off { color: var(--sun); font-weight: 600; }
-.ev-tagtip .tc-card + .tc-card { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.ev-tagtip .tc-card + .tc-card { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .ev-tagtip { max-height: 80vh; overflow: hidden; }
-.ev-tagtip .tc-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-weight: 600; font-size: 14px; padding-left: 6px; border-left: 3px solid var(--ev); margin-bottom: 2px; word-break: break-all; }
+.ev-tagtip .tc-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; padding-left: 8px; border-left: 3px solid var(--ev); margin-bottom: 4px; word-break: break-all; }
 .ev-tagtip .tc-badge { font-weight: normal; font-size: 11px; padding: 0 5px; border-radius: 3px; background: color-mix(in srgb, var(--ev) 18%, transparent); color: var(--text-muted); }
-.ev-tagtip .tc-row { display: flex; gap: 8px; align-items: baseline; }
+.ev-tagtip .tc-row { display: flex; gap: 10px; line-height: 1.5; align-items: baseline; }
 .ev-tagtip .tc-k { flex: none; min-width: 44px; white-space: nowrap; color: var(--text-muted); }
-.ev-tagtip .tc-v { display: flex; flex-wrap: wrap; gap: 3px; white-space: pre-wrap; word-break: break-all; }
+.ev-tagtip .tc-v { display: flex; flex-wrap: wrap; gap: 4px; white-space: pre-wrap; word-break: break-all; }
 .ev-tagtip .tc-dim { color: var(--text-muted); }
 .ev-tagtip .tc-chip, .ev-add-tagpick button { display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); }
 .ev-add-tagpick { display: flex; flex-wrap: wrap; gap: 3px; flex-basis: 100%; max-height: 62px; overflow-y: auto; }

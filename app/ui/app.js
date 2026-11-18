@@ -171,12 +171,6 @@
   /** 연결됨: 지금 보는 스페이스는 이 창의 SSE 상태, 나머지는 트레이가 알려준 상태 */
   const spOnline = (sp) => !!sp && (state.space && sp.key === state.space.key ? state.status === "online" : sp.status === "online");
   const canEdit = (ev) => (ev.spaces || []).every((k) => { const sp = spaceByKey(k); return spOnline(sp) && !state.roSpaces.has(k); });
-  /** 스페이스 표시 색: 개인 스페이스 = 회색, 팀 = 이름 해시 색 (태그 색과 같은 방식) */
-  // 첫 내 스페이스만 회색, 나머지(내 스페이스 여럿·참여 스페이스)는 이름으로 색
-  const spaceColor = (sp) => {
-    const first = state.spaces.find((s) => s.kind === "me");
-    return !sp || (first && sp.key === first.key) ? "var(--sp-me)" : `hsl(${CAL.tagHue("space:" + sp.name)} 55% 55%)`;
-  };
 
   async function loadSchedule(sp) {
     sp = sp || state.space;
@@ -224,7 +218,7 @@
     for (const m of list) {
       // 스페이스가 둘 이상 보일 때만 어느 스페이스 일정인지 표시 (색 막대 + 툴팁)
       m.stale = !m.spaces.some((k) => spOnline(spaceByKey(k)));   // 끊긴 스페이스 것만 = 마지막으로 받은 내용 (흐리게)
-      m.spaceMarks = shown.length > 1 ? m.spaces.map((k) => { const sp = spaceByKey(k); return { name: sp ? sp.name : k, color: spaceColor(sp) }; }) : null;
+      m.spaceMarks = shown.length > 1 ? m.spaces.map((k) => { const sp = spaceByKey(k); return { name: sp ? sp.name : k }; }) : null;
     }
     list.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
     state.schedAll = list;   // 태그로 거르기 전 (태그 필터 목록을 만들 때 씀)
@@ -286,7 +280,7 @@
     const list = schedSpaces();
     box.hidden = !list.length;
     box.innerHTML = list.map((sp) => `<label><input type="checkbox" data-key="${esc(sp.key)}"${state.calHidden.has(sp.key) ? "" : " checked"}>` +
-      `<i style="background:${spaceColor(sp)}"></i><span class="chip-t" title="${esc(sp.name)}">${esc(sp.name)}</span></label>`).join("");
+      `<span class="chip-t" title="${esc(sp.name)}">${esc(sp.name)}</span></label>`).join("");
   }
 
   // ------------------------------------------------------------ 태그 필터 (숨긴 태그 = calHidden 안의 "#태그", "#" = 태그 없는 일정)
@@ -877,13 +871,6 @@
   $("note-next").addEventListener("click", () => App.step(1));
   $("note-today").addEventListener("click", () => App.step(0));
 
-  for (const btn of document.querySelectorAll(".close-btn")) {
-    btn.addEventListener("click", () => {
-      note.exit();
-      // 닫기 전에 저장이 끝나도록
-      note.save().then(() => { if (bridge) bridge.closePanel(); });
-    });
-  }
   // 편집 영역 밖(바 등)을 누르거나 창이 포커스를 잃으면 편집 끝
   document.addEventListener("mousedown", (e) => {
     if (note.editing && !e.target.closest("#note-body")) note.exit();
@@ -1158,7 +1145,7 @@
       // 숨긴(체크 끈) 스페이스도 고를 수 있게 모두 띄움 (흐리게 표시)
       // 연결 안 된 스페이스는 흐리게·못 고름 (툴팁으로 이유)
       $("ev-add-spaces").innerHTML = schedSpaces().map((sp) => `<label title="${sp.kind === "me" ? "내 PC" : "다른 PC"}${spOnline(sp) ? "" : " · 연결되지 않았습니다"}${state.calHidden.has(sp.key) ? " · 달력에서 숨겼습니다" : ""}"${state.calHidden.has(sp.key) || !spOnline(sp) ? ' class="sp-hidden"' : ""}>` +
-        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) || !spOnline(sp) ? " disabled" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
+        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) || !spOnline(sp) ? " disabled" : ""}>${esc(sp.name)}</label>`).join("");
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
       $("ev-add-err").textContent = "";
@@ -1498,7 +1485,7 @@
   function spaceHover(key) {
     const grid = $("cal-grid"), sp = key && spaceByKey(key);
     grid.classList.toggle("sp-hover", !!sp);
-    if (sp) grid.style.setProperty("--spc", spaceColor(sp));
+    if (sp) grid.style.setProperty("--spc", "var(--accent)");
     for (const el of grid.querySelectorAll(".ev[data-k]")) {
       const ev = evOf(el);
       el.classList.toggle("sp-on", !!(sp && ev && (ev.spaces || []).includes(key)));

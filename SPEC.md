@@ -93,7 +93,7 @@ Windows 전용 단일 프로그램. 노트 서버, 오버레이 뷰어, 트레�
 | `space` | 할일 창에서 보는 스페이스 id |
 | `cal_hidden` | 달력에서 숨긴 스페이스 id, `#태그`, `@멤버` |
 | `windows` | 창 위치와 크기 |
-| `wake_click`, `opacity`, `theme` | 표시 옵션 |
+| `wake_click`, `theme` | 표시 옵션 |
 
 v26.11.17 이전 설정·파일(`vault`·`vault.json`·`server.json`·`client.json`·`overlays`·`%APPDATA%\dogani\team\team.json`·`DoganiServer` 자동 실행 등)은 더 읽지 않음 (#3).
 

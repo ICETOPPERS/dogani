@@ -115,8 +115,8 @@
       const r = ev.start === ev.end ? ev.end : `${ev.start} ~ ${ev.end}`;
       return [`${ev.task.done ? "[완료] " : ""}${ev.title}`, r, `할일 · ${ev.task.note} 노트`].join("\n");
     }
-    const range = ev.open === "start" ? `~ ${ev.end} (시작 미정)`
-      : ev.open === "end" ? `${ev.start} ~ (끝 미정)`
+    const range = ev.open === "start" ? `~ ${ev.end}`
+      : ev.open === "end" ? `${ev.start} ~`
       : ev.start === ev.end ? ev.start : `${ev.start} ~ ${ev.end}`;
     return [
       `${ev.title}${OFF_NAME[ev.off] ? ` (${OFF_NAME[ev.off]})` : ""}`,
@@ -135,8 +135,8 @@
     const t = ev.task;
     const range = t && t.plan ? `${ev.start} 완료 (예정 ${t.plan[0] === t.plan[1] ? t.plan[1] : t.plan.join(" ~ ")})`
       : t ? (ev.start === ev.end ? ev.end : `${ev.start} ~ ${ev.end}`)
-      : ev.open === "start" ? `~ ${ev.end} (시작 미정)`
-      : ev.open === "end" ? `${ev.start} ~ (끝 미정)`
+      : ev.open === "start" ? `~ ${ev.end}`
+      : ev.open === "end" ? `${ev.start} ~`
       : ev.start === ev.end ? ev.start : `${ev.start} ~ ${ev.end}`;
     const when = esc(range) + (ev.time ? " " + esc(timeText(ev)) : "") + (ev.uncertain ? ' <span class="tc-dim">(시각 미정)</span>' : "");
     const badges = [t && (t.done ? "완료" : "할일"), ev.important && "중요", OFF_NAME[ev.off]].filter(Boolean)
@@ -144,7 +144,7 @@
     return `<div class="tc-title" style="--ev:${eventColor(ev)}">${esc(ev.title)}${badges}</div>` +
       (t ? "" : row("날짜", when)) +
       row("장소", ev.place && esc(ev.place)) +
-      row("스페이스", ev.spaceMarks && ev.spaceMarks.map((m) => `<span class="tc-chip"><i style="background:${m.color}"></i>${esc(m.name)}</span>`).join("")) +
+      row("스페이스", ev.spaceMarks && ev.spaceMarks.map((m) => `<span class="tc-chip">${esc(m.name)}</span>`).join("")) +
       row("태그", (ev.tags || []).map((g) => `<span class="tc-chip tag-chip" style="--tc:${tagColor(g)}">${esc(g)}</span>`).join("")) +
       row("멤버", (ev.members || []).map((m) => `<span class="tc-chip">@${esc(m)}</span>`).join("")) +
       row("메모", ev.memo && esc(ev.memo)) +
