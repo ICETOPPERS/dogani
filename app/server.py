@@ -135,6 +135,7 @@ class NoteStore:
 
     def __init__(self):
         self.lock = threading.Lock()
+        self.write_lock = threading.Lock()   # 저장(mtime 확인 + 쓰기)을 하나씩
         self.root = ""
         self.files = {}    # date -> (path, mtime_ns, size)
         self.summary = {}  # date -> (done, total)
@@ -285,25 +286,30 @@ class NoteStore:
             "prev": self.prev_note(d) if not text.strip() else None,
         }
 
-    def write(self, d, content, base_mtime=None):
+    def write(self, d, content, base_mtime=None, new_only=False):
         """노트 저장. 파일이 없으면 선택폴더/yyyy.mm/YYMMDD 요일.md 로 새로 만든다.
-        base_mtime 이 현재 파일과 다르면(그 사이 옵시디언 등에서 수정됨) 저장하지 않고 None."""
-        with self.lock:
-            info = self.files.get(d)
-            root = self.root
-        if info:
-            path = info[0]
-            if base_mtime is not None and os.stat(path).st_mtime_ns // 1_000_000 != base_mtime:
-                return None
-        else:
-            if not root or not os.path.isdir(root):
-                raise OSError("todo 경로가 지정되지 않았습니다")
-            folder = os.path.join(root, f"{d.year:04d}.{d.month:02d}")
-            os.makedirs(folder, exist_ok=True)
-            path = os.path.join(folder, f"{d:%y%m%d} {WEEKDAYS[d.weekday()]}.md")
-        atomic_write(path, content)
-        self.refresh()
-        return self.note(d)
+        base_mtime 이 현재 파일과 다르면(그 사이 옵시디언 등에서 수정됨) 저장하지 않고 None.
+        new_only = 없는 파일로 알고 씀(base_mtime: null) → 그 사이 누가 만들었으면 None"""
+        with self.write_lock:   # 확인~쓰기 사이에 다른 저장이 끼면 둘 다 통과해 앞의 것이 사라짐
+            with self.lock:
+                info = self.files.get(d)
+                root = self.root
+            if info:
+                path = info[0]
+                if new_only or (base_mtime is not None and os.stat(path).st_mtime_ns // 1_000_000 != base_mtime):
+                    return None
+            else:
+                if not root or not os.path.isdir(root):
+                    raise OSError("todo 경로가 지정되지 않았습니다")
+                folder = os.path.join(root, f"{d.year:04d}.{d.month:02d}")
+                os.makedirs(folder, exist_ok=True)
+                path = os.path.join(folder, f"{d:%y%m%d} {WEEKDAYS[d.weekday()]}.md")
+                if new_only and os.path.exists(path):   # 목록엔 아직 없지만(옵시디언이 방금 만듦 등) 파일이 있음
+                    self.refresh()   # 다시 받을 때 그 파일이 보이게
+                    return None
+            atomic_write(path, content)
+            self.refresh()
+            return self.note(d)
 
     def sched_doc_path(self):
         """편집할 일정 파일: 있으면 첫 번째(올해 것 우선), 없으면 선택폴더/일정.md"""
@@ -328,13 +334,19 @@ class NoteStore:
         return {"exists": True, "title": os.path.splitext(os.path.basename(path))[0],
                 "mtime": st.st_mtime_ns // 1_000_000, "content": read_text(path)}
 
-    def write_sched_doc(self, content, base_mtime=None):
+    def write_sched_doc(self, content, base_mtime=None, new_only=False, stamp=None):
         path = self.sched_doc_path()
         if not path:
             raise OSError("todo 경로가 지정되지 않았습니다")
-        if os.path.exists(path) and base_mtime is not None and os.stat(path).st_mtime_ns // 1_000_000 != base_mtime:
-            return None
-        atomic_write(path, content)
+        with self.write_lock:
+            if os.path.exists(path) and (new_only or (base_mtime is not None and os.stat(path).st_mtime_ns // 1_000_000 != base_mtime)):
+                return None
+            if stamp:
+                try:
+                    content = stamp(self.sched_doc().get("content", ""), content)
+                except OSError:
+                    pass   # 이전 내용을 못 읽으면 꼬리표만 건너뜀 (저장은 진행)
+            atomic_write(path, content)
         return self.sched_doc()
 
     def month(self, year, month):
@@ -543,14 +555,13 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError
             try:
                 if path == "/note":
-                    note = store.write(dt.date.fromisoformat(body["date"]), content, body.get("base_mtime"))
+                    # base_mtime: null(키는 있음) = 새 파일로 알고 씀. 키가 없으면(예전 방식) 확인 없이 덮어씀
+                    new_only = "base_mtime" in body and body["base_mtime"] is None
+                    note = store.write(dt.date.fromisoformat(body["date"]), content, body.get("base_mtime"), new_only)
                 elif path == "/sched-doc":
-                    if stamp:   # 팀스페이스: 새로 쓰거나 고친 줄 끝에 작성자 꼬리표
-                        try:
-                            content = stamp(store.sched_doc().get("content", ""), content)
-                        except OSError:
-                            pass   # 이전 내용을 못 읽으면 꼬리표만 건너뜀 (저장은 진행)
-                    note = store.write_sched_doc(content, body.get("base_mtime"))
+                    # stamp = 팀스페이스: 새로 쓰거나 고친 줄 끝에 작성자 꼬리표 (저장 잠금 안에서 계산)
+                    note = store.write_sched_doc(content, body.get("base_mtime"),
+                                                 "base_mtime" in body and body["base_mtime"] is None, stamp)
                 else:
                     return self._send_json({"error": "not found"}, 404)
             except OSError as e:
@@ -589,7 +600,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     msg = q.get(timeout=HEARTBEAT_INTERVAL)
                 except queue.Empty:
-                    msg = ": ping\n\n"
+                    msg = "event: ping\ndata: {}\n\n"   # 주석이 아닌 이벤트: 받는 쪽이 끊김을 알아챔 (app.js 감시)
                 self.wfile.write(msg.encode("utf-8"))
                 self.wfile.flush()
         except (OSError, ConnectionError):

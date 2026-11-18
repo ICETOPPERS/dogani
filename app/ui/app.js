@@ -75,17 +75,22 @@
     if (state.status === status) return;
     state.status = status;
     if (bridge && state.space) bridge.setStatus(state.space.key, status);
+    note.setReadOnly(!canType());   // 끊긴 동안은 못 씀 (쓰던 내용은 보관, 다시 연결되면 저장)
+    rebuildSched();
   }
+  /** 노트에 쓸 수 있음 = 쓰기 권한 + 연결됨 */
+  const canType = () => state.writable && state.status === "online";
 
   function connect() {
     clearTimeout(state.retryTimer);
+    clearInterval(state.watchTimer);
     if (state.es) state.es.close();
     state.es = null;
     state.status = "";
     setStatus("offline");
     const sp = state.space;
     state.base = sp && sp.server ? "http://" + sp.server + sp.prefix : "";
-    rebuildSched();
+    rebuildSched();   // setStatus 가 같은 상태면 건너뛰므로 여기서 (스페이스가 바뀜)
     if (!state.base) return;
 
     const es = new EventSource(state.base + "/events");
@@ -94,6 +99,7 @@
       refresh();
       loadSchedule();
       api("/info").then((info) => setWritable(!!info.writable)).catch(() => {});
+      note.retryPending();   // 끊긴 동안 저장 못 한 내용
     });
     es.addEventListener("schedule", () => loadSchedule());
     es.addEventListener("changed", (e) => {
@@ -104,6 +110,13 @@
       if (dates.length && state.space && state.space.kind === "me") loadSchedule();
     });
     es.addEventListener("reload", () => { loadSchedule(); refresh(); });
+    // 끊김 감시: 노트북을 덮거나 망이 바뀌면 연결이 소리 없이 죽음 → 서버 ping(15초)이 40초 넘게 안 오면 다시 연결.
+    // ping 이벤트를 한 번이라도 받은 뒤에만 (예전 호스트는 ping 을 주석으로 보내 이벤트가 안 옴)
+    let beat = 0;
+    for (const ev of ["hello", "ping", "changed", "schedule", "reload"]) es.addEventListener(ev, () => { if (ev === "ping" || beat) beat = Date.now(); });
+    state.watchTimer = setInterval(() => {
+      if (state.es === es && beat && Date.now() - beat > 40000) connect();
+    }, 5000);
     es.onerror = () => {
       if (state.es !== es) return;
       // 브라우저가 자동 재연결을 포기한 경우(CLOSED: 401·403 등)에는 이유를 확인하고 직접 재시도
@@ -136,7 +149,9 @@
   }
   const shownSpaces = () => schedSpaces().filter((s) => !state.calHidden.has(s.key));
   /** 일정을 고칠 수 있음 = 쓰기 권한 + 그 일정이 있는 스페이스가 모두 연결됨 (꺼진 호스트에 쓰다 멈추지 않게) */
-  const canEdit = (ev) => (ev.spaces || []).every((k) => { const sp = spaceByKey(k); return sp && sp.status === "online" && !state.roSpaces.has(k); });
+  /** 연결됨: 지금 보는 스페이스는 이 창의 SSE 상태, 나머지는 트레이가 알려준 상태 */
+  const spOnline = (sp) => !!sp && (state.space && sp.key === state.space.key ? state.status === "online" : sp.status === "online");
+  const canEdit = (ev) => (ev.spaces || []).every((k) => { const sp = spaceByKey(k); return spOnline(sp) && !state.roSpaces.has(k); });
   /** 스페이스 표시 색: 개인 스페이스 = 회색, 팀 = 이름 해시 색 (태그 색과 같은 방식) */
   const spaceColor = (sp) => (!sp || sp.kind === "me" ? "var(--sp-me)" : `hsl(${CAL.tagHue("space:" + sp.name)} 55% 55%)`);
 
@@ -185,6 +200,7 @@
     }
     for (const m of list) {
       // 스페이스가 둘 이상 보일 때만 어느 스페이스 일정인지 표시 (색 막대 + 툴팁)
+      m.stale = !m.spaces.some((k) => spOnline(spaceByKey(k)));   // 끊긴 스페이스 것만 = 마지막으로 받은 내용 (흐리게)
       m.spaceMarks = shown.length > 1 ? m.spaces.map((k) => { const sp = spaceByKey(k); return { name: sp ? sp.name : k, color: spaceColor(sp) }; }) : null;
     }
     list.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
@@ -276,6 +292,81 @@
       `<label class="no-tag"><input type="checkbox" data-tag=""${state.calHidden.has(NO_TAG) ? "" : " checked"}>태그 없는 일정</label>`;
   }
 
+  // ------------------------------------------------------------ 저장 못 한 내용 보관 (끊김·충돌 대비)
+  /** 키 = 스페이스 키|날짜 → {content, from: 바탕 문서 {content, mtime} | null, at}. 트레이 프로그램이 파일로 남김(앱을 꺼도 유지) */
+  let pendMem = {};
+  const copyText = (t) => {
+    if (bridge && bridge.copyText) bridge.copyText(t);
+    else if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {});
+  };
+  const pendGet = (k) => pendMem[k] || null;
+  function pendSet(k, v) {
+    if (v) pendMem[k] = v; else delete pendMem[k];   // 지우기는 항상 알림 (다른 창·이전 실행이 남긴 것도. 없으면 파이썬이 그냥 넘어감)
+    if (bridge && bridge.setUnsaved) bridge.setUnsaved(k, v ? JSON.stringify(v) : "");
+  }
+
+  /** 줄 단위 LCS: o[i] 가 a 의 몇 번째 줄과 짝인지 (없으면 -1) */
+  function lcsMap(o, a) {
+    let p = 0, so = o.length, sa = a.length;
+    while (p < so && p < sa && o[p] === a[p]) p++;
+    while (so > p && sa > p && o[so - 1] === a[sa - 1]) { so--; sa--; }
+    const map = new Int32Array(o.length).fill(-1);
+    for (let i = 0; i < p; i++) map[i] = i;
+    for (let i = so; i < o.length; i++) map[i] = i - so + sa;
+    const n = so - p, m = sa - p;
+    if (n && m) {
+      if (n * m > 4e6) return null;
+      const w = m + 1, dp = new Uint16Array((n + 1) * w);
+      for (let i = n - 1; i >= 0; i--)
+        for (let j = m - 1; j >= 0; j--)
+          dp[i * w + j] = o[p + i] === a[p + j] ? dp[(i + 1) * w + j + 1] + 1 : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
+      let i = 0, j = 0;
+      while (i < n && j < m) {
+        if (o[p + i] === a[p + j]) { map[p + i] = p + j; i++; j++; }
+        else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) i++;
+        else j++;
+      }
+    }
+    return map;
+  }
+  /**
+   * 3-way 합치기 (줄 단위): 바탕 base 에서 내가 고친 mine 과 남이 고친 theirs.
+   * 다른 줄을 고쳤으면 둘 다 반영, 같은 자리에 둘 다 줄을 넣었으면 내 것 → 남의 것 순서로 둘 다. 같은 줄을 서로 다르게 고쳤으면 null
+   */
+  function merge3(base, mine, theirs, eol) {
+    const sp = (t) => (t === "" ? [] : t.split(/\r\n|\n/));   // 빈 문서 = 줄 없음 (빈 줄 하나가 아님: 새 노트 동시 작성)
+    const o = sp(base), a = sp(mine), b = sp(theirs);
+    // 둘 다 끝에 줄바꿈 = 마지막 빈 줄은 따로 (끝에 각자 줄을 넣었을 때 사이에 빈 줄이 끼지 않게)
+    const nl = a.length && b.length && a[a.length - 1] === "" && b[b.length - 1] === "";
+    if (nl) { a.pop(); b.pop(); if (o.length && o[o.length - 1] === "") o.pop(); }
+    const ma = lcsMap(o, a), mb = lcsMap(o, b);
+    if (!ma || !mb) return null;
+    const same = (x, y) => x.length === y.length && x.every((v, k) => v === y[k]);
+    const out = [];
+    let i = 0, ja = 0, jb = 0;
+    for (;;) {
+      let k = i;
+      while (k < o.length && !(ma[k] >= 0 && mb[k] >= 0)) k++;
+      const ea = k < o.length ? ma[k] : a.length, eb = k < o.length ? mb[k] : b.length;
+      const oc = o.slice(i, k), ac = a.slice(ja, ea), bc = b.slice(jb, eb);
+      if (same(ac, oc)) out.push(...bc);
+      else if (same(bc, oc) || same(ac, bc)) out.push(...ac);
+      else if (!oc.length) out.push(...ac, ...bc);
+      else if (ac.length === oc.length && bc.length === oc.length) {
+        // 붙어 있는 줄을 각자 고침 (할일 체크 등): 줄마다 바뀐 쪽, 같은 줄을 둘 다 다르게 고쳤을 때만 충돌
+        for (let n = 0; n < oc.length; n++) {
+          if (ac[n] !== oc[n] && bc[n] !== oc[n] && ac[n] !== bc[n]) return null;
+          out.push(ac[n] !== oc[n] ? ac[n] : bc[n]);
+        }
+      } else return null;
+      if (k >= o.length) break;
+      out.push(o[k]);
+      i = k + 1; ja = ea + 1; jb = eb + 1;
+    }
+    if (nl) out.push("");
+    return out.join(eol);
+  }
+
   // ------------------------------------------------------------ 문서 편집 칸 (할일 노트 / 일정 파일 같이 씀)
   /**
    * o = { body, footer, key(): 지금 보여줄 문서 키, fetch(key), post(key, content, baseMtime, base),
@@ -292,7 +383,7 @@
       if (!p.editor) {
         p.editor = window.DoganiEditor.create(host, {
           doc: text,
-          readOnly: !state.writable,
+          readOnly: !canType(),
           tableHtml: MD.tableHtml,
           onChange(text, immediate) {
             p.lines = text.split("\n");
@@ -301,8 +392,8 @@
             timer = setTimeout(p.save, 700);
             if (immediate) p.save();   // 체크박스 클릭은 바로 저장
           },
-          onFocus() { if (state.writable) p.editing = true; },
-          onBlur() { if (p.editing) { p.editing = false; p.save(); } },
+          onFocus() { if (canType()) p.editing = true; },
+          onBlur() { if (p.editing) endEdit(); },
           onSave: () => p.save(),
           // 줄 손잡이: 끌기 시작 = 저장, 다른 창(달력)에 놓았으면 편집 끝 (달력이 같은 노트를 고침 → 다시 읽기)
           onDragStart: () => p.save(),
@@ -320,7 +411,7 @@
       } else if (p.editor.getDoc() !== text) {
         p.editor.setDoc(text, keepScroll);
       }
-      p.editor.setReadOnly(!state.writable);
+      p.editor.setReadOnly(!canType());
       o.body.classList.add("has-editor");
       // 이미 붙어 있으면 다시 붙이지 않음 (뗐다 붙이면 스크롤이 맨 위로)
       if (host.parentNode !== o.body || o.body.childNodes.length !== 1) o.body.replaceChildren(host);
@@ -334,18 +425,49 @@
       o.footer.textContent = "";
     };
 
+    /** 보관해 둔 (저장 못 한) 내용을 편집 칸에 띄움. 바탕 문서 = 그 내용을 쓰기 시작한 서버 문서 */
+    function showPending(key, pend, keepScroll) {
+      p.doc = pend.from ? { exists: true, content: pend.from.content, mtime: pend.from.mtime } : { exists: false };
+      p.key = key;
+      p.eol = pend.content.includes("\r\n") ? "\r\n" : "\n";
+      p.lines = pend.content.split(/\r\n|\n/);
+      show(p.lines.join("\n"), keepScroll);
+      if (o.progress) setProgress(...countTasks(p.lines));
+    }
+
+    /** 편집 칸 내용이 바탕 문서(서버에서 마지막으로 받거나 저장한 것)와 다름 */
+    const dirty = () => !!p.lines && !!p.doc && p.lines.join(p.eol) !== (p.doc.exists ? p.doc.content : "");
+
     p.load = async (keepScroll) => {
-      const key = o.key();
+      const key = o.key(), pk = o.pendKey(key);
       let d;
       try {
         d = await o.fetch(key);
       } catch (e) {
-        if (key !== o.key()) return;
+        if (key !== o.key() || p.editing) return;
+        if (p.key === key && dirty()) { o.footer.textContent = errorText(e); return; }   // 쓰던 내용은 그대로 (저장이 보관함)
+        const pend = pendGet(pk);
+        if (pend) {   // 끊김: 서버 대신 저장 못 한 내용을 보여 줌 (읽기 전용, 다시 연결되면 저장)
+          showPending(key, pend, keepScroll);
+          o.footer.textContent = `${errorText(e)} 저장 못 한 내용은 보관 중 (다시 연결되면 저장)`;
+          return;
+        }
         p.doc = null;
         p.message(`${esc(errorText(e))}<br><small>${esc(state.space ? state.space.server : "")}</small>`);
         return;
       }
       if (key !== o.key() || p.editing) return;
+      // 아직 저장 안 된 변경이 있음(자동 저장 대기·저장 중): 덮지 않고 저장 → 그 사이 바뀐 서버 내용과 합쳐짐
+      if (p.key === key && dirty()) { p.save(); return; }
+      const pend = pendGet(pk);
+      if (pend) {   // 저장 못 한 내용이 있으면 서버 것으로 덮지 않고 그걸 다시 저장 (그 사이 바뀌었으면 합침)
+        if (o.loaded) o.loaded({ title: d.title });
+        showPending(key, pend, keepScroll);
+        if (!state.writable) { o.footer.textContent = "저장 못 한 내용이 있지만 편집 권한이 없습니다."; return; }
+        o.footer.textContent = "저장 못 한 내용 저장 중…";
+        p.save();
+        return;
+      }
       p.doc = d;
       p.key = key;
       if (!d.exists) {
@@ -362,44 +484,113 @@
         `마지막 수정 ${t.getMonth() + 1}/${t.getDate()} ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
     };
 
-    p.reloadIfIdle = () => { if (!p.editing) p.load(true); };
+    /** 편집 중엔 다시 불러오지 않음 → 편집이 끝나면(endEdit) 놓친 변경을 불러옴 */
+    p.reloadIfIdle = () => { if (!p.editing) p.load(true); else p.missed = true; };
+    function endEdit() {
+      p.editing = false;
+      p.save().then(() => { if (p.missed && !p.editing) { p.missed = false; p.load(true); } });
+    }
+    /** 다시 연결됨: 편집 중이라 load 가 건너뛰는 경우에도 보관한 내용 저장 */
+    p.retryPending = () => { if (p.editing && p.key != null && pendGet(o.pendKey(p.key))) p.save(); };
 
-    /** 저장은 순서대로 하나씩 (자동 저장이 겹치면 mtime 충돌이 나므로). 스페이스·날짜는 부른 시점 기준 */
+    /** 편집 칸을 합친 내용으로 맞춤. 저장하는 동안 더 쓴 게 있으면(posted ≠ 지금) 그것도 합침 */
+    function adopt(posted, merged) {
+      const now = p.lines.join(p.eol);
+      const next = now === posted ? merged : merge3(posted, now, merged, p.eol);
+      if (next == null) return false;
+      if (next === now) return true;
+      p.lines = next.split(/\r\n|\n/);
+      p.editor.setDoc(p.lines.join("\n"), true);
+      if (o.progress) setProgress(...countTasks(p.lines));
+      return true;
+    }
+
+    /**
+     * 저장은 순서대로 하나씩 (자동 저장이 겹치면 mtime 충돌이 나므로). 스페이스·날짜는 부른 시점 기준.
+     * - 충돌(409, 그 사이 옵시디언·다른 팀원이 고침): 서버 것을 다시 받아 줄 단위로 합쳐 다시 저장.
+     *   같은 줄을 서로 다르게 고쳤을 때만 물어봄 (내 것으로 덮기 / 서버 것 쓰기 + 내 것은 클립보드)
+     * - 연결 끊김 등: 내용을 바탕 문서와 같이 보관 → 다시 연결되면(hello) 같은 방식으로 저장
+     */
     p.save = () => {
       clearTimeout(timer);
       if (!p.lines || p.key == null) return chain;
       const content = p.lines.join(p.eol);
-      const key = p.key, base = state.base;
+      const key = p.key, base = state.base, pk = o.pendKey(key), eol = p.eol;
+      const here = () => p.key === key && state.base === base;
+      const snap = p.doc;   // 부른 시점의 바탕 (실행될 때 날짜를 옮겼으면 이걸 씀)
       chain = chain.then(async () => {
-        const target = p.doc && p.doc.exists && p.key === key ? p.doc : null;
-        if (target && target.content === content) return true;
-        try {
-          const d = await o.post(key, content, target ? target.mtime : null, base);
-          if (p.key === key && state.base === base) {
-            p.doc = d;
-            if (o.loaded) o.loaded(d);
-            o.footer.textContent = "저장됨";
+        // 이 내용의 바탕 = 서버에서 마지막으로 받은 것 (앞 저장이 끝났으면 그 결과)
+        let from = (here() ? p.doc : snap) || { exists: false };
+        if (from.exists && from.content === content) { pendSet(pk, null); return true; }
+        let mine = content;
+        for (let tries = 0; tries < 4; tries++) {
+          let e;
+          try {
+            const d = await o.post(key, mine, from.exists ? from.mtime : null, base);
+            pendSet(pk, null);
+            if (here()) {
+              p.doc = d;
+              // 저장 중에 더 쓴 내용과 합치지 못함: 바탕을 '합치기 전 내 것'으로 두고 mtime 을 틀리게 → 다음 저장이 충돌 → 물어봄
+              if (mine !== content && !adopt(content, mine)) p.doc = { exists: true, content, mtime: -1 };
+              if (o.loaded) o.loaded(d);
+              o.footer.textContent = mine !== content ? "저장됨 (그 사이 다른 곳에서 고친 내용과 합침)" : "저장됨";
+            }
+            return true;
+          } catch (err) { e = err; }
+          if (e.code === "conflict") {
+            let cur = null;
+            try { cur = await o.fetch(key, base); } catch (err) { e = err; }
+            if (cur) {
+              const theirs = cur.exists ? cur.content : "";
+              const merged = merge3(from.exists ? from.content : "", mine, theirs, eol);
+              if (merged !== null) { mine = merged; from = cur; continue; }
+              // 같은 줄을 서로 다르게 고침 → 사용자에게
+              if (confirm("그 사이 다른 곳(옵시디언·다른 팀원)에서 같은 줄을 다르게 고쳤습니다.\n\n" +
+                "확인 = 내 내용으로 덮어쓰기 (상대 내용은 클립보드에 복사)\n취소 = 상대 내용 쓰기 (내 내용은 클립보드에 복사)")) {
+                copyText(theirs);
+                from = cur; continue;
+              }
+              copyText(mine);
+              pendSet(pk, null);
+              if (here()) {
+                p.doc = cur;
+                p.lines = theirs.split(/\r\n|\n/);
+                p.eol = theirs.includes("\r\n") ? "\r\n" : "\n";
+                if (cur.exists) { show(p.lines.join("\n"), true); if (o.loaded) o.loaded(cur); }
+                else p.load(true);
+                o.footer.textContent = "상대 내용으로 바꿈 (내 내용은 클립보드에 복사됨)";
+              }
+              return false;
+            }
           }
-          return true;
-        } catch (e) {
-          if (state.base === base) {
-            o.footer.textContent = errorText(e);
-            if (e.code === "conflict" && !p.editing) p.load(true);
+          if (e.code === "read_only") {   // 권한이 없어짐: 보관해도 저장할 수 없음
+            copyText(mine);
+            pendSet(pk, null);
+            if (here()) o.footer.textContent = errorText(e) + " (쓰던 내용은 클립보드에 복사됨)";
+            return false;
           }
+          // 끊김·로그인 풀림·서버 오류: 보관 → 다시 연결되면 저장
+          pendSet(pk, { content: mine, from: from.exists ? { content: from.content, mtime: from.mtime } : null, at: Date.now() });
+          if (here()) o.footer.textContent = errorText(e) + " 쓴 내용은 보관했다가 다시 연결되면 저장합니다.";
+          // 요청 자체가 안 감(망 끊김) = SSE 도 죽었을 수 있음 → 바로 다시 연결 (연결되면 hello 에서 다시 저장)
+          if (!e.code && state.base === base && state.status === "online") connect();
           return false;
         }
+        pendSet(pk, { content: mine, from: from.exists ? { content: from.content, mtime: from.mtime } : null, at: Date.now() });
+        if (here()) o.footer.textContent = "계속 충돌해서 저장하지 못했습니다. 쓴 내용은 보관 중 (다시 불러오면 다시 시도)";
+        return false;
       });
       return chain;
     };
 
     p.exit = () => {
       if (p.editor && p.editor.hasFocus()) p.editor.blur();   // onBlur 에서 저장
-      else if (p.editing) { p.editing = false; p.save(); }
+      else if (p.editing) endEdit();
     };
 
     /** 문서가 없는 날짜/파일: 빈 문서로 작성 시작 (첫 저장 때 파일 생성) */
     p.startBlank = () => {
-      if (!state.writable || p.lines || !p.doc || p.doc.exists || p.doc.no_dir) return false;
+      if (!canType() || p.lines || !p.doc || p.doc.exists || p.doc.no_dir) return false;
       p.lines = [""];
       p.eol = "\n";
       p.key = o.key();
@@ -424,8 +615,9 @@
     footer: $("note-footer"),
     progress: true,
     key: () => state.base + "|" + state.noteDate,
-    fetch: (key) => api(`/note?date=${key.split("|")[1]}`),
-    post: (key, content, base_mtime, base) => api("/note", { date: key.split("|")[1], content, base_mtime }, base),
+    fetch: (key, base) => api(`/note?date=${key.split("|").pop()}`, undefined, base),
+    pendKey: (key) => (state.space ? state.space.key : "") + "|" + key.split("|").pop(),
+    post: (key, content, base_mtime, base) => api("/note", { date: key.split("|").pop(), content, base_mtime }, base),
     // 줄 손잡이로 달력에 끌 때: 개인 스페이스의 할일 줄이면 dogani-task 데이터 (아니면 줄 글자 그대로)
     dragData: (i, text) => (state.space && state.space.kind === "me" && TASK_BOX_RE.test(text)
       ? TASK_DRAG + JSON.stringify({ sp: state.space.key, note: state.noteDate, line: i, raw: text }) : null),
@@ -557,7 +749,7 @@
     state.writable = w;
     document.body.classList.toggle("writable", w);
     if (!w && !soft) note.exit();
-    note.setReadOnly(!w);
+    note.setReadOnly(!canType());
     refresh();
   }
 
@@ -751,7 +943,7 @@
       try {
         const d = await api("/sched-doc", undefined, base);
         if (d.no_dir) throw new Error("스페이스 폴더가 지정되지 않았습니다.");
-        const r = await api("/sched-doc", { content: fn(d.exists ? d.content : ""), base_mtime: d.exists ? d.mtime : undefined }, base);
+        const r = await api("/sched-doc", { content: fn(d.exists ? d.content : ""), base_mtime: d.exists ? d.mtime : null }, base);
         undo.note({ sp, before: d.exists ? d.content : "", mtime: r && r.mtime });
         await loadSchedule(sp);   // 달력은 rebuildSched 가 다시 그림
         return;
@@ -845,7 +1037,7 @@
       const keys = ev ? ev.spaces || [] : [state.space && state.space.key];
       // 숨긴(체크 끈) 스페이스도 고를 수 있게 모두 띄움 (흐리게 표시)
       $("ev-add-spaces").innerHTML = schedSpaces().map((sp) => `<label title="${sp.kind === "me" ? "개인" : "팀스페이스"}${state.calHidden.has(sp.key) ? " (달력에서 숨김)" : ""}"${state.calHidden.has(sp.key) ? ' class="sp-hidden"' : ""}>` +
-        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) ? " disabled" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
+        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) || !spOnline(sp) ? " disabled" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}${spOnline(sp) ? "" : " (연결 안 됨)"}</label>`).join("");
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
       $("ev-add-err").textContent = "";
@@ -916,7 +1108,7 @@
     async submit() {
       const [st, en] = this.range();
       const keys = this.spaceKeys();
-      if (!keys.length) { $("ev-add-err").textContent = "스페이스를 하나 이상 고르세요"; return; }
+      if (!keys.length) { $("ev-add-err").textContent = "연결된 스페이스를 하나 이상 고르세요"; return; }
       if (!st && !en) { $("ev-add-err").textContent = this.kind === "event" ? "시작 날짜를 고르세요" : "날짜를 하나 이상 고르세요"; return; }
       const t1 = $("ev-add-t1").value, t2 = $("ev-add-t2").value;
       if (t1 && t2 && timeMin(t2) <= timeMin(t1)) {
@@ -1399,11 +1591,14 @@
   if (window.qt && window.QWebChannel) {
     new QWebChannel(qt.webChannelTransport, (channel) => {
       bridge = channel.objects.bridge;
-      bridge.getConfig((json) => App.configure(JSON.parse(json)));
+      const start = () => bridge.getConfig((json) => App.configure(JSON.parse(json)));
+      if (bridge.getUnsaved) bridge.getUnsaved((json) => { try { pendMem = JSON.parse(json) || {}; } catch (e) { pendMem = {}; } start(); });
+      else start();
     });
   } else {
     // 일반 브라우저에서 테스트: index.html?mode=note&server=192.168.0.10:8765&prefix=/api&theme=dark
     const q = new URLSearchParams(location.search);
+    window.__dogani = { note };   // 자동 시험용 (브라우저 모드에서만)
     App.configure({
       mode: q.get("mode") || "note", theme: q.get("theme") || "light",
       space: { key: "test", name: q.get("server") || "test", server: q.get("server") || "", prefix: q.get("prefix") || "/api", kind: "me", status: "offline" },

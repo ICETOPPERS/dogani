@@ -115,7 +115,7 @@
   // 스페이스가 둘 이상 보이면(ev.spaceMarks) 툴팁 앞에 [스페이스 이름들]. 스페이스 색은 달력 위 칩에 마우스를 올릴 때만 (app.js)
   // 할일(노트의 날짜 붙은 체크박스): 앞에 체크 네모, 완료면 취소선 (ev.task = {sp, note, line, raw, done})
   const taskBox = (ev) => (ev.task ? `<span class="ev-check${ev.task.done ? " on" : ""}"></span>` : "");
-  const evAttrs = (ev, cls) => `class="${cls.join(" ")}${ev.task ? " task" + (ev.task.done ? " done" : "") : ""}" data-k="${ev.k ?? ""}" style="--ev:${eventColor(ev)}" ` +
+  const evAttrs = (ev, cls) => `class="${cls.join(" ")}${ev.task ? " task" + (ev.task.done ? " done" : "") : ""}${ev.stale ? " stale" : ""}" data-k="${ev.k ?? ""}" style="--ev:${eventColor(ev)}" ` +
     `data-tip="${esc((ev.spaceMarks ? `[${ev.spaceMarks.map((m) => m.name).join(" · ")}] ` : "") + eventTip(ev))}"`;
 
   /** 노트 위 일정 줄용 칩 (시간·장소까지) */
