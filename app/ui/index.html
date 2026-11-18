@@ -36,8 +36,9 @@
             <div class="header-title" id="cal-title"></div>
             <button class="icon-btn" id="cal-next" title="다음 달">&#x203A;</button>
           </div>
-          <div class="bar-side right"><button class="icon-btn close-btn" title="닫기">&#x2715;</button></div>
+          <div class="bar-side right"><button class="icon-btn" id="cal-layout" title="필터를 오른쪽에 세로로 보기"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="10" rx="2"/><path class="lay-top" d="M2 6.5h12"/><path class="lay-side" d="M10.5 3v10"/></svg></button><button class="icon-btn close-btn" title="닫기">&#x2715;</button></div>
         </div>
+        <div class="cal-main">
         <!-- 달력에 일정을 보일 스페이스 (체크 끄면 숨김, 할일 창 일정 줄도 같이) -->
         <div class="cal-filters">
           <div id="cal-spaces" class="cal-spaces" hidden></div>
@@ -47,18 +48,23 @@
           <div id="cal-members" class="cal-spaces cal-tags" hidden></div>
         </div>
         <div id="cal-grid" class="cal-grid"></div>
+        </div>
         <div id="ev-tagtip" class="ev-tagtip" hidden></div>
         <footer class="view-footer" id="cal-footer"></footer>
         <form id="ev-add" class="ev-add" hidden autocomplete="off">
-          <div class="seg" id="ev-add-seg">
+          <div class="seg-row" id="ev-add-seg">
+          <div class="seg">
             <button type="button" data-kind="event" title="하는 일: 회의·실사·발표 등 (여러 날이면 띠로 표시)">일정</button>
-            <button type="button" data-kind="span" title="이어지는 상태: 출장·교육·연차·마감까지 등 (화살표로 표시)">기간</button>
+            <button type="button" data-kind="span" title="이어지는 상태: 출장·교육·마감까지 등 (화살표로 표시)">기간</button>
+          </div>
+          <div class="seg">
+            <button type="button" data-kind="off" title="사람과 제목만: 연차·반차 등 (날짜 줄에 빨간 글자). 사람을 비우면 회사 휴무처럼 모두 쉬는 날">근태</button>
+          </div>
           </div>
           <input type="text" id="ev-add-name" class="ev-add-name" placeholder="제목" required>
-          <div class="ev-add-opts">
+          <div class="ev-add-opts not-off">
             <label><input type="checkbox" id="ev-add-bold">중요</label>
             <label title="정확한 시각 모름, 그 사이 언젠가"><input type="checkbox" id="ev-add-about">애매함</label>
-            <label><input type="checkbox" id="ev-add-off">쉬는 날</label>
           </div>
           <div class="ev-add-grid">
             <span class="k" title="여러 개 고르면 각 스페이스 일정 파일에 같은 줄을 넣음">스페이스</span>
@@ -67,18 +73,18 @@
             <div class="v">
               <input type="date" id="ev-add-start"><span class="sep">-</span><input type="date" id="ev-add-end">
             </div>
-            <span class="k">시간</span>
-            <div class="v">
+            <span class="k not-off">시간</span>
+            <div class="v not-off">
               <select id="ev-add-t1"></select><span class="sep">-</span><select id="ev-add-t2"></select>
             </div>
-            <span class="k k-top">태그</span>
-            <div class="v v-tags"><input type="text" id="ev-add-tags" placeholder="쉼표로 구분  예) 과제, 교육">
+            <span class="k k-top not-off">태그</span>
+            <div class="v v-tags not-off"><input type="text" id="ev-add-tags" placeholder="쉼표로 구분  예) 과제, 교육">
               <div id="ev-add-tagpick" class="ev-add-tagpick" hidden></div></div>
             <span class="k k-top" title="일정에 든 사람 (@이름). 만든 사람과 따로">멤버</span>
             <div class="v v-tags"><input type="text" id="ev-add-members" placeholder="쉼표로 구분  예) 홍길동, 김철수">
               <div id="ev-add-mempick" class="ev-add-tagpick" hidden></div></div>
-            <span class="k">장소</span>
-            <div class="v"><input type="text" id="ev-add-place"></div>
+            <span class="k not-off">장소</span>
+            <div class="v not-off"><input type="text" id="ev-add-place"></div>
             <span class="k" id="ev-add-memo-k" hidden>메모</span>
             <div class="v" id="ev-add-memo-row" hidden><input type="text" id="ev-add-memo"></div>
           </div>

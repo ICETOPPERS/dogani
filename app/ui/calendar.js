@@ -33,28 +33,74 @@
     // 골든 앵글로 흩어서 비슷한 이름도 색이 멀어지게
     return Math.round(((h >>> 0) * 137.508) % 360);
   }
-  const eventColor = (ev) => (ev.tags && ev.tags.length ? `hsl(${tagHue(ev.tags[0])} 70% 50%)` : "var(--accent)");
+  // 근태 = 빨강(--sun), 태그 = 태그 색, 태그 없는 할일 = --text-muted (본문보다 한 단계 옅게), 나머지 = --accent
+  const eventColor = (ev) => (ev.off ? "var(--sun)" : ev.tags && ev.tags.length ? `hsl(${tagHue(ev.tags[0])} 70% 50%)` : ev.task ? "var(--text-muted)" : "var(--accent)");
 
-  /** 일정 목록 → { byDate: {iso: [ev]}, off: Set(iso), list } (ev.k = list 안 번호, 달력에서 data-k 로 찾음) */
-  function index(events) {
-    const byDate = {};
+  /**
+   * 근태 (==날짜== 줄, 날짜 줄 자리에 표시, 일정 칸에는 안 그림):
+   * 보는 사람마다 다름: "rest" = 멤버 없음(모두) 또는 멤버에 내가 있음 → 내 쉬는 날(빨간 칸·노트 이동 건너뜀),
+   * "leave" = 남의 근태 → 날짜 옆 빨간 글자만. 아니면 ""
+   */
+  function offKind(ev, me) {
+    if (!ev.holiday) return "";
+    const ms = ev.members || [];
+    return !ms.length || (me && ms.includes(me)) ? "rest" : "leave";
+  }
+
+  /**
+   * 일정 목록 → { byDate: {iso: [ev]}, off: Set(iso), slot: {iso: [ev|공휴일]}, list }
+   * (ev.k = list 안 번호, 달력에서 data-k 로 찾음). hol = {iso: [이름]} 받아 온 공휴일, me = 내 이름
+   */
+  function index(events, hol, me) {
+    const byDate = {}, slot = {};
     const off = new Set();
     const list = events || [];
-    list.forEach((ev, k) => { ev.k = k; });
+    list.forEach((ev, k) => { ev.k = k; ev.off = offKind(ev, me); });
     for (const ev of list) {
       let d = ev.start;
       for (let k = 0; d <= ev.end && k < 366; k++, d = addDays(d, 1)) {
-        (byDate[d] = byDate[d] || []).push(ev);
         // 시작/끝 미정 일정의 페이드용 하루는 쉬는 날로 치지 않음
         const fake = (ev.open === "start" && d === ev.start) || (ev.open === "end" && d === ev.end);
-        if (ev.holiday && !fake) off.add(d);
+        if (ev.off) {
+          // 여러 날 근태는 토·일을 빼고 (연차를 늘려도 주말은 그대로). 하루짜리를 주말에 직접 넣은 건 보임
+          if (fake || (ev.start !== ev.end && isWeekend(d))) continue;
+          (slot[d] = slot[d] || []).push(ev);
+          if (ev.off === "rest") off.add(d);
+          continue;
+        }
+        (byDate[d] = byDate[d] || []).push(ev);
       }
     }
-    return { byDate, off, list };
+    for (const [d, names] of Object.entries(hol || {})) {
+      (slot[d] = slot[d] || []).unshift(...names.map((title) => ({ pub: true, title })));
+      off.add(d);
+    }
+    // 자리 순서: 공휴일 > 쉬는 날 > 근태
+    const rank = { rest: 2, leave: 3 };
+    for (const d in slot) slot[d].sort((a, b) => (a.pub ? 1 : rank[a.off]) - (b.pub ? 1 : rank[b.off]));
+    return { byDate, off, slot, list };
   }
 
   const isWeekend = (s) => { const w = parseISO(s).getDay(); return w === 0 || w === 6; };
   const isOff = (s, idx) => isWeekend(s) || !!(idx && idx.off.has(s));
+
+  /** 날짜 줄 자리 (공휴일·근태). 공휴일은 받은 것이라 못 고침 (누르면 빈 칸처럼 그날 노트), 근태는 눌러서 수정 */
+  function slotHtml(d, idx) {
+    const items = (idx && idx.slot[d]) || [];
+    if (!items.length) return "";
+    const html = items.map((x) => {
+      if (x.pub) return `<span class="hol pub" title="공휴일 · ${esc(x.title)}">${esc(x.title)}</span>`;
+      const who = x.members.length ? x.members.map((m) => "@" + m).join(" ") + " " : "";
+      const cls = ["ev", "hol", x.off];
+      return `<span ${evAttrs(x, cls)}>${esc(who + x.title)}</span>`;
+    }).join("");
+    return `<span class="slot">${html}</span>`;
+  }
+
+  /** 날짜 줄 자리 글자 목록 (정보 카드 머리용): ["성탄절", "@송민 연차"] */
+  function slotLabels(d, idx) {
+    return ((idx && idx.slot[d]) || []).map((x) => (x.pub || !x.members.length ? "" : x.members.map((m) => "@" + m).join(" ") + " ") + x.title);
+  }
 
   /** s 에서 dir(±1) 방향으로 다음 근무일 (토/일·쉬는 날 건너뜀) */
   function nextWorkday(s, dir, idx) {
@@ -63,6 +109,7 @@
     return d;
   }
 
+  const OFF_NAME = { rest: "근태 · 쉬는 날", leave: "근태" };
   function eventTip(ev) {
     if (ev.task) {
       const r = ev.start === ev.end ? ev.end : `${ev.start} ~ ${ev.end}`;
@@ -72,7 +119,7 @@
       : ev.open === "end" ? `${ev.start} ~ (끝 미정)`
       : ev.start === ev.end ? ev.start : `${ev.start} ~ ${ev.end}`;
     return [
-      `${ev.title}${ev.holiday ? " (쉬는 날)" : ""}`,
+      `${ev.title}${OFF_NAME[ev.off] ? ` (${OFF_NAME[ev.off]})` : ""}`,
       `${range}${ev.time ? " " + timeText(ev) : ""}${ev.uncertain ? " (정확한 시각 미정)" : ""}`,
       ev.place && `장소: ${ev.place}`,
       ev.tags && ev.tags.length && ev.tags.map((t) => "#" + t).join(" "),
@@ -92,7 +139,7 @@
       : ev.open === "end" ? `${ev.start} ~ (끝 미정)`
       : ev.start === ev.end ? ev.start : `${ev.start} ~ ${ev.end}`;
     const when = esc(range) + (ev.time ? " " + esc(timeText(ev)) : "") + (ev.uncertain ? ' <span class="tc-dim">(시각 미정)</span>' : "");
-    const badges = [t && (t.done ? "완료" : "할일"), ev.important && "중요", ev.holiday && "쉬는 날"].filter(Boolean)
+    const badges = [t && (t.done ? "완료" : "할일"), ev.important && "중요", OFF_NAME[ev.off]].filter(Boolean)
       .map((b) => `<span class="tc-badge">${b}</span>`).join("");
     return `<div class="tc-title" style="--ev:${eventColor(ev)}">${esc(ev.title)}${badges}</div>` +
       (t ? "" : row("날짜", when)) +
@@ -122,11 +169,12 @@
   function chip(ev) {
     const cls = ["ev"];
     if (ev.important) cls.push("important");
-    if (ev.holiday) cls.push("holiday");
+    if (ev.off) cls.push("holiday");
     if (ev.uncertain) cls.push("unsure");
+    const who = ev.off && ev.members.length ? ev.members.map((m) => "@" + m).join(" ") + " " : "";
     const time = ev.time ? `<span class="ev-time">${esc(timeText(ev))}</span>` : "";
     const place = ev.place ? `<span class="ev-place">· ${esc(ev.place)}</span>` : "";
-    return `<span ${evAttrs(ev, cls)}>${taskBox(ev)}${time}${flag(ev)}${esc(ev.title)}${place}</span>`;
+    return `<span ${evAttrs(ev, cls)}>${taskBox(ev)}${time}${flag(ev)}${esc(who + ev.title)}${place}</span>`;
   }
 
   const FLAG = '<svg class="ev-flag" viewBox="0 0 12 12"><path d="M2.5 1v10.5M2.5 1.5h7l-1.8 2.75L9.5 7h-7"/></svg>';
@@ -250,7 +298,9 @@
       const list = singles.length || lane.length || deco.length ? `<div class="evs"><div class="singles">${singles.map(dayItem).join("")}${decoHtml}</div>` +
         (lane.length ? `<div class="lanes">${lane.join("")}</div>` : "") + "</div>" : "";
       // 주 안에서 앞 칸이 위: 기간 띠가 오른쪽 칸들 위로 뻗어도 클릭이 띠로 감 (안 그러면 뒤 칸이 덮음)
-      html += `<div class="${cls.join(" ")}" data-date="${d}" style="z-index:${7 - (k % 7)}"><span class="num">${cursor.getDate()}</span>${list}${count}</div>`;
+      // 날짜 줄: 숫자 · (+N·✦) · 휴일 자리(남는 너비, 넘치면 …) · 할일 수
+      const head = `<div class="head"><span class="num">${cursor.getDate()}</span>${slotHtml(d, idx)}${count}</div>`;
+      html += `<div class="${cls.join(" ")}" data-date="${d}" style="z-index:${7 - (k % 7)}">${head}${list}</div>`;
       cursor.setDate(cursor.getDate() + 1);
     }
     return { html, notes, done, total };
@@ -297,12 +347,34 @@
   /** 노트 위에 보여줄 그날 일정 줄 HTML (없으면 "") */
   function dayEvents(d, idx) {
     // 그날 노트에 이미 있는 할일은 일정 줄에 또 띄우지 않음
-    const evs = ((idx && idx.byDate[d]) || []).filter((ev) => !(ev.task && ev.task.note === d));
+    // 근태도 칩으로 (공휴일은 받은 것이라 뺌)
+    const offs = ((idx && idx.slot[d]) || []).filter((x) => !x.pub);
+    const evs = [...offs, ...((idx && idx.byDate[d]) || [])].filter((ev) => !(ev.task && ev.task.note === d));
     return evs.map(chip).join("").replace(/ data-tip="/g, ' title="');   // 할일 창엔 미리보기 카드가 없어 기본 툴팁 유지
   }
 
+  // 필터(스페이스·태그·멤버) 자리: 위 ↔ 오른쪽 사이드바. 이 PC 에만 기억
+  (function initLayout() {
+    const view = document.getElementById("view-cal");
+    const btn = document.getElementById("cal-layout");
+    if (!view || !btn) return;
+    const apply = (side) => {
+      view.classList.toggle("cal-side", side);
+      btn.title = side ? "필터를 달력 위에 보기" : "필터를 오른쪽에 세로로 보기";
+    };
+    let side = false;
+    try { side = localStorage.getItem("dogani.calSide") === "1"; } catch (e) {}
+    apply(side);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      side = !side;
+      apply(side);
+      try { localStorage.setItem("dogani.calSide", side ? "1" : "0"); } catch (e2) {}
+    });
+  })();
+
   window.doganiCalendar = {
     WD, pad, iso, parseISO, addDays, addMonths, tagHue, eventCard,
-    index, isOff, nextWorkday, renderMonth, fitCells, dayEvents,
+    index, isOff, nextWorkday, slotLabels, renderMonth, fitCells, dayEvents,
   };
 })();

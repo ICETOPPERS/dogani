@@ -401,16 +401,27 @@ body.writable .cm-table-widget { cursor: text; }
 .cal-day.today { border-color: var(--accent); }
 .cal-day.selected { background: var(--bg-hover); }
 .cal-day .num { font-size: calc(12px * var(--fz, 1)); font-weight: 600; }
+/* 날짜 줄: 숫자 · +N·✦ · 휴일 자리(남는 너비) · 할일 수. 한 줄 고정 (칸 아래를 먹지 않아 기간 띠 줄이 옆 칸과 맞음) */
+.cal-day .head { display: flex; align-items: center; gap: 3px; min-width: 0; flex: none; }
+.cal-day .head .num { flex: none; }
+.cal-day .slot {
+  flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: calc(9.5px * var(--fz, 1)); line-height: calc(14px * var(--fz, 1)); font-weight: 600; color: var(--sun);
+}
+.cal-day .slot > * + *::before { content: " · "; color: var(--sun); text-decoration: none; display: inline; }
+.cal-day .slot > .ev { display: inline; padding: 0; margin: 0; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; }
+.cal-day .slot > .ev:hover { text-decoration: underline; }
+.cal-day .slot > .leave { opacity: .85; font-weight: 500; }
+.cal-day .slot > .cancel { text-decoration: line-through; opacity: .5; }
 .cal-day .count {
-  /* 숫자 줄 오른쪽에 띄움: 칸 아래 한 줄을 차지하면 노트 있는 칸만 일정 영역이 짧아져 기간 띠 줄이 옆 칸과 어긋남 */
-  position: absolute;
-  top: 4px;
-  right: 4px;
+  flex: none;
+  margin-left: auto;
   max-width: 100%;
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
-  font-size: calc(12px * var(--fz, 1));
+  font-size: calc(9.5px * var(--fz, 1));
+  line-height: calc(14px * var(--fz, 1));
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   padding: 0 4px;
@@ -419,6 +430,9 @@ body.writable .cm-table-widget { cursor: text; }
   color: var(--accent);
 }
 .cal-day .count.done { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+/* 할일 수는 오늘·선택한 날·마우스 올린 칸에만 */
+.cal-day .count { display: none; }
+.cal-day.today .count, .cal-day.selected .count, .cal-day.hov .count { display: block; }
 .cal-day .count.none { background: var(--bg-hover); color: var(--text-muted); }
 .header-title.is-today { color: var(--accent); }
 .dot.blocked { background: #e05252; box-shadow: 0 0 6px #e05252; }
@@ -462,7 +476,7 @@ body.writable .cm-table-widget { cursor: text; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* 숨은 장식 표시: 숫자 없이 옅은 ✦ (일정 +N 보다 가볍게) */
-.cal-day > .deco-more { position: absolute; top: 4px; left: calc(26px * var(--fz, 1)); line-height: calc(16px * var(--fz, 1)); font-size: calc(9px * var(--fz, 1)); color: var(--text-muted); opacity: .6; cursor: default; }
+.cal-day .head > .deco-more { flex: none; line-height: calc(16px * var(--fz, 1)); font-size: calc(9px * var(--fz, 1)); color: var(--text-muted); opacity: .6; cursor: default; }
 #deco-menu {
   position: fixed; z-index: 1000; padding: 3px 10px; font: inherit; font-size: 12px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);
@@ -470,8 +484,8 @@ body.writable .cm-table-widget { cursor: text; }
 }
 #deco-menu:hover { background: var(--bg-hover); }
 /* 숨은 일정 수: 날짜 숫자 오른쪽 강조 배지 */
-.cal-day > .ev.ev-more {
-  position: absolute; top: 4px; left: 24px; margin: 0; padding: 0 5px;
+.cal-day .head > .ev.ev-more {
+  flex: none; margin: 0; padding: 0 5px;
   line-height: calc(16px * var(--fz, 1)); font-size: calc(11px * var(--fz, 1)); font-weight: 700; border-radius: 8px;
   background: var(--accent); color: #fff; overflow: visible;
 }
@@ -601,7 +615,8 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .panel-bar .close-btn { font-size: 13px; color: var(--text-muted); width: 26px; }
 .panel-bar .header-title { cursor: move; }
 .panel-bar .header-title.is-today { color: var(--accent); }
-#view-note .progress-row { padding: 8px 14px 2px; min-height: 18px; }   /* 할일 수 글자가 없어도 높이 같게 */
+#view-note .progress-row { padding: 8px 14px 2px; height: 18px; box-sizing: content-box; }   /* 할일 수 글자·노트가 없어도 높이 같게 */
+#view-note .progress-text { line-height: 18px; }
 .space-tabs[hidden] { display: none; }
 .space-tabs { display: flex; gap: 2px; padding: 6px 10px 0; flex: none; overflow-x: auto; scrollbar-width: none; }
 .space-tab {
@@ -618,6 +633,28 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 /* 스페이스 표시: 일정 앞 색 막대 (스페이스가 둘 이상 보일 때만), 달력 위 스페이스 체크 */
 :root { --sp-me: #8b93a1; }
 .cal-filters { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 0; }
+/* 필터 자리: 기본은 달력 위, .cal-side 면 오른쪽 세로 사이드바 (버튼 #cal-layout) */
+.cal-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cal-main > .cal-grid { order: 0; }
+.cal-side .cal-main { flex-direction: row; }
+.cal-side .cal-filters {
+  order: 1; width: 128px; flex-shrink: 0; overflow-y: auto; gap: 10px;
+  padding: 8px 8px 8px 6px; border-left: 1px solid var(--border);
+}
+/* 칩 모양·크기는 위 배치와 똑같이 (내용 길이대로 폭). 세로로 쌓고, 사이드바보다 긴 이름만 … (전체는 title) */
+.cal-side .cal-spaces { flex-direction: column; flex-wrap: nowrap; align-items: flex-start; }
+.cal-side .cal-spaces label { max-width: 100%; min-width: 0; flex: none; }
+.cal-side .cal-spaces label .chip-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-side .cal-main > .cal-grid { flex: 1; min-width: 0; }
+/* 사이드바 묶음 제목 + 사이 가로줄 */
+.cal-side .cal-spaces::before { font-size: 10px; color: var(--text-muted); font-weight: 600; margin-bottom: 1px; }
+.cal-side #cal-spaces::before { content: "스페이스"; }
+.cal-side #cal-tags::before { content: "태그"; }
+.cal-side #cal-members::before { content: "멤버"; }
+.cal-side .cal-spaces:not([hidden]) ~ .cal-spaces:not([hidden]) { border-top: 1px solid var(--border); padding-top: 8px; }
+#cal-layout .lay-side { display: none; }
+.cal-side #cal-layout .lay-top { display: none; }
+.cal-side #cal-layout .lay-side { display: inline; }
 .cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; cursor: pointer; }
 .cal-spaces[hidden] { display: none; }
 .cal-spaces label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
@@ -625,8 +662,13 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .cal-spaces label:has(input:checked) { color: var(--text); }
 .cal-spaces label:not(:has(input:checked)) i { opacity: .25; }
 .cal-spaces input { display: none; }
-.cal-tags label.no-tag { border-color: transparent; padding: 1px 4px; }
+.cal-tags label.no-tag { border-color: transparent; padding: 1px 4px; font-size: 10px; }
 .cal-tags label.no-tag:not(:has(input:checked)) { text-decoration: line-through; }
+/* 멤버 칩: 스페이스 실제 멤버 = 옅은 배경, 일정에만 적힌 이름 = 점선 테두리 */
+#cal-members label.mem-real { background: var(--bg-hover); }
+#cal-members label:not(.mem-real):not(.no-tag) { border-style: dashed; }
+/* 칩 줄에 마우스 = 안 올린 칩은 옅게. 칩 사이 틈은 하던 그대로 (app.js chipHover 가 .hl·.hl-cur 를 붙임) */
+.cal-tags.hl label:not(.hl-cur):has(input:checked) { opacity: .55; }
 /* 달력 일정 정보 카드: 달력보다 한 단계 큰 글자, Ctrl+휠과 상관없이 고정 크기 */
 .ev-tagtip {
   position: fixed; z-index: 40; pointer-events: none;
@@ -638,6 +680,7 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 }
 .ev-tagtip[hidden] { display: none; }
 .ev-tagtip .tc-date { font-size: 12px; color: var(--text-muted); margin-bottom: 3px; }
+.ev-tagtip .tc-off { color: var(--sun); font-weight: 600; }
 .ev-tagtip .tc-card + .tc-card { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
 .ev-tagtip { max-height: 80vh; overflow: hidden; }
 .ev-tagtip .tc-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-weight: 600; font-size: 14px; padding-left: 6px; border-left: 3px solid var(--ev); margin-bottom: 2px; word-break: break-all; }
@@ -751,3 +794,10 @@ body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
 
 /* 끊긴 스페이스의 일정 = 마지막으로 받은 내용 */
 .ev.stale { opacity: .45; }
+
+/* 일정 추가 팝업: 휴일 종류는 중요·애매함·시간·장소 없음, 출근 체크만 */
+.ev-add[data-kind="off"] .not-off, .ev-add:not([data-kind="off"]) .only-off { display: none; }
+/* 종류 버튼: [일정|기간] 한 묶음 + 떨어진 [근태] (근태는 성질이 달라 따로) */
+.seg-row { display: flex; gap: 8px; }
+.seg-row .seg:first-child { flex: 2; } .seg-row .seg:last-child { flex: 1; }
+.seg button:disabled { opacity: .35; cursor: default; }

@@ -15,7 +15,7 @@
 
   const dayLabel = (s) => {
     const d = parseISO(s);
-    return `${String(d.getFullYear()).slice(2)}${pad(d.getMonth() + 1)}${pad(d.getDate())} ${WD[d.getDay()]}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} (${WD[d.getDay()]})`;
   };
 
   const state = {
@@ -32,13 +32,14 @@
     retryTimer: null,
     writable: false,
     myName: "",        // 설정의 내 이름 (멤버 칩의 "나")
-    teamNames: [],     // 팀스페이스 팀원 이름 (/schedule 의 members, 멤버 칩 후보)
+    membersBySpace: {}, // 스페이스 키 → 팀원 이름 (/schedule 의 members, 멤버 칩 후보)
     calHidden: new Set(), // 달력·할일 일정에서 숨긴 스페이스 키 (설정 cal_hidden, 창끼리 같이 씀)
     evBySpace: {},     // 스페이스 키 → /schedule 일정 목록
     tasksBySpace: {},  // 스페이스 키 → /schedule 의 날짜 붙은 할일 (개인 스페이스만 옴)
     decoBySpace: {},   // 스페이스 키 → /schedule 의 장식 줄 (일정 파일 "261119 ✦ 글자")
     roSpaces: new Set(), // 읽기만 허용된 스페이스 키 (팀 관리자가 편집 허용을 끔. /schedule 의 writable)
     sched: null,       // 일정 색인 (CAL.index)
+    holidays: {},      // 받아 온 공휴일 {iso: [이름]} (연도별로 합침)
   };
   let bridge = null;
 
@@ -185,7 +186,7 @@
       state.evBySpace[sp.key] = res.events || [];
       state.tasksBySpace[sp.key] = res.tasks || [];
       state.decoBySpace[sp.key] = res.decos || [];
-      if (res.members) state.teamNames = res.members;
+      if (res.members) state.membersBySpace[sp.key] = res.members;
       const ro = res.writable === false;
       if (ro !== state.roSpaces.has(sp.key)) {
         if (ro) state.roSpaces.add(sp.key); else state.roSpaces.delete(sp.key);
@@ -239,7 +240,9 @@
     }
     for (const t of latest.values()) {
       const on = t.done && t.done_on;
-      tasks.push({ start: on || t.start, end: on || t.end, title: t.title, tags: [], members: [], spaces: [t.sp],
+      // 할일 제목의 #태그 → 색만 맞춤 (태그 필터에는 안 걸림)
+      const ttags = [...(t.title || "").matchAll(/(?:^|\s)#([^\s#]+)/g)].map((m) => m[1]);
+      tasks.push({ start: on || t.start, end: on || t.end, title: t.title, tags: ttags, members: [], spaces: [t.sp],
         task: { sp: t.sp, note: t.note, line: t.line, raw: t.raw, done: t.done, plan: on ? [t.start, t.end] : null } });
     }
     // 장식: 스페이스별로 파일 순서 그대로 (장식끼리만 순서, 일정과는 안 섞음)
@@ -247,9 +250,34 @@
     for (const sp of shown) for (const d of state.decoBySpace[sp.key] || []) (decos[d.start] = decos[d.start] || []).push({ ...d, sp: sp.key });
     state.decos = decos;
     state.schedItems = [...list.filter((ev) => tagShown(ev) && memberShown(ev)), ...tasks];
-    state.sched = CAL.index(state.schedItems);
+    ensureHolidays();
+    state.sched = CAL.index(state.schedItems, state.holidays, cleanName(state.myName));
     if (state.mode === "cal" && state.calView === "month") renderMonth();
     if (state.mode === "note") renderSchedRow();
+  }
+
+  // 공휴일: 파이썬이 PC 마다 받아 저장해 둔 것 (12시간 지나면 뒤에서 새로 받음 → 받는 중이면 조금 뒤 다시 물음)
+  const holYears = {};   // year -> "ok" | "wait" | 다시 물은 횟수
+  function ensureHolidays() {
+    if (!bridge || !bridge.getHolidays) return;
+    const ys = new Set([state.today, state.noteDate, state.calYM + "-01"].filter(Boolean).map((d) => +d.slice(0, 4)));
+    if (state.calYM) { ys.add(+addMonths(state.calYM, -1).slice(0, 4)); ys.add(+addMonths(state.calYM, 1).slice(0, 4)); }
+    for (const y of ys) if (!holYears[y]) askHolidays(y, 0);
+  }
+  function askHolidays(y, tries) {
+    holYears[y] = "wait";
+    bridge.getHolidays(y, (json) => {
+      let r;
+      try { r = JSON.parse(json); } catch (e) { r = { days: {} }; }
+      const prefix = y + "-";
+      const before = JSON.stringify(Object.entries(state.holidays).filter(([d]) => d.startsWith(prefix)));
+      for (const d of Object.keys(state.holidays)) if (d.startsWith(prefix)) delete state.holidays[d];
+      Object.assign(state.holidays, r.days || {});
+      if (r.pending && tries < 5) setTimeout(() => askHolidays(y, tries + 1), 4000);
+      else holYears[y] = "ok";
+      const after = JSON.stringify(Object.entries(state.holidays).filter(([d]) => d.startsWith(prefix)));
+      if (before !== after) rebuildSched();
+    });
   }
 
   /** 달력 위 스페이스 체크 (끄면 그 스페이스 일정을 달력·할일 창에서 숨김. 화면 공유할 때 내 일정 숨기기 등) */
@@ -258,7 +286,7 @@
     const list = schedSpaces();
     box.hidden = !list.length;
     box.innerHTML = list.map((sp) => `<label><input type="checkbox" data-key="${esc(sp.key)}"${state.calHidden.has(sp.key) ? "" : " checked"}>` +
-      `<i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
+      `<i style="background:${spaceColor(sp)}"></i><span class="chip-t" title="${esc(sp.name)}">${esc(sp.name)}</span></label>`).join("");
   }
 
   // ------------------------------------------------------------ 태그 필터 (숨긴 태그 = calHidden 안의 "#태그", "#" = 태그 없는 일정)
@@ -289,10 +317,12 @@
     const ms = ev.members || [];
     return ms.length ? ms.some((m) => !state.calHidden.has("@" + m)) : !state.calHidden.has(NO_MEMBER);
   }
+  /** 모든 스페이스 팀원 이름 (스페이스마다 따로 받아 합침) */
+  const teamNames = () => Object.values(state.membersBySpace).flat();
   /** 고를 수 있는 멤버: 나 → 팀원 → 보이는 달 일정에 적힌 이름 (중복 없이) */
   function memberPicks() {
     const out = [];
-    for (const n of [state.myName, ...state.teamNames, ...shownTags("members")]) {
+    for (const n of [state.myName, ...teamNames(), ...shownTags("members")]) {
       const c = cleanName(n);
       if (c && !out.includes(c)) out.push(c);
     }
@@ -301,17 +331,20 @@
   const PERSON_ICON = '<svg class="person-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z"/></svg>';
   const meMark = (m) => (m === cleanName(state.myName) ? " (나)" : "");
   function renderMemberFilter() {
-    const box = $("cal-members"), ms = shownTags("members");
+    const box = $("cal-members"), found = shownTags("members");
+    // 스페이스 실제 멤버(나·팀원)를 앞에, 일정에만 적힌 이름은 뒤에
+    const real = [state.myName, ...teamNames()].map(cleanName).filter((n, i, a) => n && a.indexOf(n) === i);
+    const ms = [...real.filter((n) => found.includes(n)), ...found.filter((n) => !real.includes(n))];
     box.hidden = !ms.length && !state.calHidden.has(NO_MEMBER);
-    box.innerHTML = ms.map((m) => `<label><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
-      `${PERSON_ICON}${esc(m)}${meMark(m)}</label>`).join("") +
+    box.innerHTML = ms.map((m) => `<label${real.includes(m) ? ' class="mem-real"' : ""}><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
+      `${PERSON_ICON}<span class="chip-t" title="${esc(m)}">${esc(m)}${meMark(m)}</span></label>`).join("") +
       `<label class="no-tag"><input type="checkbox" data-mem=""${state.calHidden.has(NO_MEMBER) ? "" : " checked"}>멤버 없는 일정</label>`;
   }
   function renderTagFilter() {
     const box = $("cal-tags"), tags = shownTags();
     box.hidden = !tags.length && !state.calHidden.has(NO_TAG);
     box.innerHTML = tags.map((t) => `<label class="tag-chip" style="--tc:${tagColor(t)}"><input type="checkbox" data-tag="${esc(t)}"${state.calHidden.has("#" + t) ? "" : " checked"}>` +
-      `${esc(t)}</label>`).join("") +
+      `<span class="chip-t" title="${esc(t)}">${esc(t)}</span></label>`).join("") +
       `<label class="no-tag"><input type="checkbox" data-tag=""${state.calHidden.has(NO_TAG) ? "" : " checked"}>태그 없는 일정</label>`;
   }
 
@@ -707,7 +740,7 @@
         setProgress(d.done, d.total);
         if (!d.content.trim() && copyButton(d)) $("note-body").insertAdjacentHTML("afterbegin", `<div class="empty">${copyButton(d)}</div>`);
       }
-      reportNoteDate(d.title);
+      reportNoteDate();
     },
   });
 
@@ -759,8 +792,9 @@
     return [done, total];
   }
 
-  function reportNoteDate(title) {
-    const t = title || dayLabel(state.noteDate);
+  /** 제목은 파일명이 아니라 날짜로 (2026-11-18 (수)) */
+  function reportNoteDate() {
+    const t = dayLabel(state.noteDate);
     $("note-title").textContent = t;
     $("note-title").classList.toggle("is-today", state.noteDate === state.today);
     if (bridge) bridge.noteDateChanged(state.noteDate, t, state.noteDate === state.today);
@@ -781,6 +815,7 @@
   let monthReq = null;
 
   async function loadMonth(force) {
+    ensureHolidays();
     const ym = state.calYM, key = state.base + "|" + ym;
     const [y, m] = ym.split("-").map(Number);
     $("cal-title").textContent = `${y}년 ${m}월`;
@@ -798,11 +833,12 @@
     renderMonth();
   }
 
+  let lastMonthHtml = "";
   function renderMonth() {
     if (monthData.key !== state.base + "|" + state.calYM) return loadMonth();
     const r = CAL.renderMonth({ ym: state.calYM, days: monthData.days, idx: state.sched, decos: state.decos, today: state.today, selected: state.noteDate });
-    $("cal-grid").innerHTML = r.html;
-    CAL.fitCells($("cal-grid"));
+    // 내용이 같으면 다시 그리지 않음 (스페이스 전환 때 여러 번 불려 깜빡이던 것)
+    if (r.html !== lastMonthHtml) { lastMonthHtml = r.html; $("cal-grid").innerHTML = r.html; CAL.fitCells($("cal-grid")); }
     renderTagFilter();
     renderMemberFilter();
     $("cal-footer").textContent = monthData.failed || `노트 ${r.notes}개 · 완료 ${r.done}/${r.total}`;
@@ -829,6 +865,7 @@
     if (now === state.today) return;
     const prev = state.today;
     state.today = now;
+    for (const y in holYears) if (holYears[y] === "ok") delete holYears[y];   // 하루 한 번은 공휴일 다시 확인 (대체·임시공휴일)
     // 오늘 노트를 보고 있었다면 자정에 다음 날로 넘어간다 (편집 중이면 끝난 뒤에)
     if (state.mode === "note" && state.noteDate === prev && !note.editing) showNote(now);
     if (state.mode === "cal" && state.calView === "month") renderMonth();
@@ -873,6 +910,7 @@
     state.noteDate = cell.dataset.date;
     for (const c of $("cal-grid").querySelectorAll(".cal-day.selected")) c.classList.remove("selected");
     cell.classList.add("selected");
+    lastMonthHtml = "";   // 화면을 직접 바꿨으니 다음 그리기는 비교 없이
     if (bridge) bridge.openNote(cell.dataset.date);
   });
 
@@ -889,6 +927,7 @@
   const cleanField = (v) => String(v || "").replace(/,/g, " ").trim();
   /** 일정 dict → 파일 한 줄 (팝업 입력값과 같은 모양: kind, s, e, t1, t2, about, bold, off, title, tags[], place, memo) */
   function schedLine(o) {
+    if (o.kind === "off") return offLine(o);
     let date = o.s && o.e && o.s !== o.e ? `${yymmdd(o.s)}-${yymmdd(o.e)}` : o.s && o.e ? yymmdd(o.s) : o.s ? `${yymmdd(o.s)}-` : `-${yymmdd(o.e)}`;
     if (o.off) date = `==${date}==`;
     const mk = (o.bold ? "**" : "") + (o.kind === "span" ? "*" : "");
@@ -902,14 +941,25 @@
     if (memo) parts.push(memo);
     return parts.join(", ");
   }
+  /** 근태 줄 "==날짜==, 제목, @사람" (태그 없음. 사람 없으면 모두 쉬는 날) */
+  function offLine(o) {
+    const date = o.s && o.e && o.s !== o.e ? `${yymmdd(o.s)}-${yymmdd(o.e)}` : yymmdd(o.s || o.e);
+    const ms = [...new Set((o.members || []).map(cleanName).filter(Boolean))];
+    const parts = [`==${date}==`, cleanField(o.title)];
+    const tagCol = ms.map((m) => "@" + m).join(" ");
+    const memo = cleanField(o.memo);
+    if (tagCol || memo) parts.push(tagCol);
+    if (memo) parts.push("", memo);
+    return parts.join(", ");
+  }
   /** 화면의 일정(ev) → schedLine 입력 모양 (시작/끝 미정은 그쪽을 비움) */
   function evToObj(ev) {
     const [t1, t2] = (ev.time || "").split("-");
     return {
-      kind: ev.italic ? "span" : "event",
+      kind: ev.off ? "off" : ev.italic ? "span" : "event",
       s: ev.open === "start" ? "" : ev.start, e: ev.open === "end" ? "" : ev.end,
-      t1: t1 || "", t2: t2 || "", about: !!ev.uncertain, bold: !!ev.important, off: !!ev.holiday,
-      title: ev.title, tags: ev.tags || [], members: ev.members || [], place: ev.place || "", memo: ev.memo || "",
+      t1: t1 || "", t2: t2 || "", about: !!ev.uncertain, bold: !!ev.important,
+      title: ev.title, tags: ev.off ? [] : ev.tags || [], members: ev.members || [], place: ev.place || "", memo: ev.memo || "",
     };
   }
   // ---- 할일(노트 체크박스 줄) 날짜: 옵시디언 Tasks 형식 `🛫 시작` `📅 마감` (YYYY-MM-DD)
@@ -1079,7 +1129,6 @@
         $("ev-add-name").value = o.title;
         $("ev-add-bold").checked = o.bold;
         $("ev-add-about").checked = o.about;
-        $("ev-add-off").checked = o.off;
         for (const [id, t] of [["ev-add-t1", o.t1], ["ev-add-t2", o.t2]]) {
           const sel = $(id);
           if (t && ![...sel.options].some((op) => op.value === t)) sel.add(new Option(t, t));  // 7:15 같은 30분 단위 밖 시각
@@ -1113,6 +1162,8 @@
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
       $("ev-add-err").textContent = "";
+      // 근태는 근태끼리만: 수정할 때 일정·기간 ↔ 근태로는 못 바꿈 (일정 ↔ 기간은 표시만 달라 바꿀 수 있음)
+      for (const b of $("ev-add-seg").querySelectorAll("button")) b.disabled = !!o && (b.dataset.kind === "off") !== (o.kind === "off");
       this.setKind(o ? o.kind : "event");
       f.hidden = false;
       const w = f.offsetWidth, h = f.offsetHeight;
@@ -1137,16 +1188,17 @@
     },
     setKind(kind) {
       this.kind = kind;
-      for (const b of $("ev-add-seg").children) b.classList.toggle("on", b.dataset.kind === kind);
-      $("ev-add-start").title = kind === "event" ? "시작 날짜" : "비우면 시작 미정 (마감만 있을 때)";
-      $("ev-add-end").title = kind === "event" ? "비우면 하루" : "비우면 끝 미정";
+      $("ev-add").dataset.kind = kind;
+      for (const b of $("ev-add-seg").querySelectorAll("button")) b.classList.toggle("on", b.dataset.kind === kind);
+      $("ev-add-start").title = kind === "span" ? "비우면 시작 미정 (마감만 있을 때)" : "시작 날짜";
+      $("ev-add-end").title = kind === "span" ? "비우면 끝 미정" : "비우면 하루";
       this.update();
     },
     /** [시작, 끝] — 일정은 끝을 비우면 하루, 기간은 비운 쪽이 미정("") */
     range() {
       let s = $("ev-add-start").value, e = $("ev-add-end").value;
       if (s && e && e < s) [s, e] = [e, s];
-      if (this.kind === "event") return s ? [s, e || s] : ["", ""];
+      if (this.kind !== "span") return s ? [s, e || s] : ["", ""];
       return [s, e];
     },
     /** 아래 미리 보기 문구 + 달력 선택 표시를 입력에 맞춰 갱신 */
@@ -1161,6 +1213,13 @@
       else if (s) date = `${md(s)}부터 (끝 미정)`;
       else if (e) date = `${md(e)}까지 (마감)`;
       const time = !t1 ? "" : t2 ? ` ${t1}-${t2}` : ` ${t1}`;
+      if (this.kind === "off") {
+        const who = this.inputTags("ev-add-members");
+        const what = who.length ? `근태 ${who.map((m) => "@" + m).join(" ")}` : "근태 (사람을 비우면 모두 쉬는 날)";
+        $("ev-add-hint").textContent = date ? `${date} ${what}` : "";
+        markRange(s || e ? [s || e, e || s] : null);
+        return;
+      }
       const kind = this.kind === "span" ? "기간 →" : s && e && s !== e ? "일정 ▬" : "일정";
       $("ev-add-hint").textContent = date ? `${kind} ${date}${time}${t1 && about ? " (애매함)" : ""}` : "";
       markRange(s || e ? [s || e, e || s] : null);
@@ -1170,7 +1229,7 @@
       return {
         kind: this.kind, s, e,
         t1: $("ev-add-t1").value, t2: $("ev-add-t2").value, about: $("ev-add-about").checked,
-        bold: $("ev-add-bold").checked, off: $("ev-add-off").checked,
+        bold: $("ev-add-bold").checked,
         title: $("ev-add-name").value, tags: $("ev-add-tags").value.split(/[,，]/),
         members: $("ev-add-members").value.split(/[,，]/),
         place: $("ev-add-place").value, memo: $("ev-add-memo").value,
@@ -1181,7 +1240,7 @@
       const [st, en] = this.range();
       const keys = this.spaceKeys();
       if (!keys.length) { $("ev-add-err").textContent = "연결된 스페이스를 하나 이상 고르세요"; return; }
-      if (!st && !en) { $("ev-add-err").textContent = this.kind === "event" ? "시작 날짜를 고르세요" : "날짜를 하나 이상 고르세요"; return; }
+      if (!st && !en) { $("ev-add-err").textContent = this.kind !== "span" ? "시작 날짜를 고르세요" : "날짜를 하나 이상 고르세요"; return; }
       const t1 = $("ev-add-t1").value, t2 = $("ev-add-t2").value;
       if (t1 && t2 && timeMin(t2) <= timeMin(t1)) {
         $("ev-add-err").textContent = "끝 시각이 시작보다 늦어야 합니다"; return;
@@ -1482,21 +1541,32 @@
   function chipHover(box, attr, field) {
     box.addEventListener("mouseover", (e) => {
       const lab = e.target.closest("label"), inp = lab && lab.querySelector("input");
-      if (inp && inp.checked && inp.dataset[attr]) tagHover(inp.dataset[attr], field);
+      if (inp && inp.checked && inp.dataset[attr] !== undefined) {
+        tagHover(inp.dataset[attr], field);
+        for (const l of box.querySelectorAll("label.hl-cur")) if (l !== lab) l.classList.remove("hl-cur");
+        lab.classList.add("hl-cur");
+        box.classList.add("hl");
+      }
     });
-    box.addEventListener("mouseleave", () => tagHover(null));
+    box.addEventListener("mouseleave", () => {
+      tagHover(null);
+      box.classList.remove("hl");
+      for (const l of box.querySelectorAll("label.hl-cur")) l.classList.remove("hl-cur");
+    });
   }
   chipHover($("cal-members"), "mem", "members");
   function tagHover(tag, field = "tags") {
-    const key = tag ? field + ":" + tag : null;
+    const key = tag != null ? field + ":" + tag : null;
     if (key === hoverKey) return;
     hoverKey = key;
     const grid = $("cal-grid");
-    grid.classList.toggle("sp-hover", !!tag);
-    if (tag) grid.style.setProperty("--spc", field === "tags" ? tagColor(tag) : "var(--accent)");
+    const on = tag != null;   // "" = 태그(멤버) 없는 일정
+    grid.classList.toggle("sp-hover", on);
+    if (on) grid.style.setProperty("--spc", field === "tags" && tag ? tagColor(tag) : "var(--accent)");
     for (const el of grid.querySelectorAll(".ev[data-k]")) {
       const ev = evOf(el);
-      el.classList.toggle("sp-on", !!(tag && ev && (ev[field] || []).includes(tag)));
+      const vs = (ev && ev[field]) || [];
+      el.classList.toggle("sp-on", !!(on && ev && (tag ? vs.includes(tag) : !vs.length)));
     }
   }
   chipHover($("cal-tags"), "tag", "tags");
@@ -1516,9 +1586,13 @@
     tipEl = day;
     evEl.removeAttribute("title");
     const all = (state.sched && state.sched.list || []).filter((v) => v.start <= day && (v.end || v.start) >= day);
-    const shown = all.includes(ev) ? all : all.concat(ev);   // list 는 이미 시간 순
+    // 근태는 날짜 옆 글자로 (카드는 근태에 마우스를 올렸을 때 그것만)
+    const cards = all.filter((v) => !v.off);
+    const shown = ev.off || cards.includes(ev) ? (ev.off ? [ev, ...cards] : cards) : cards.concat(ev);   // list 는 이미 시간 순
     const dd = parseISO(day), wk = "일월화수목금토"[dd.getDay()];
-    tagTip.innerHTML = `<div class="tc-date">${day.replace(/-/g, ".")} (${wk})</div>` +
+    const offs = CAL.slotLabels(day, state.sched);
+    tagTip.innerHTML = `<div class="tc-date">${day.replace(/-/g, ".")} (${wk})` +
+      (offs.length ? ` <span class="tc-off">${offs.map(esc).join(" · ")}</span>` : "") + "</div>" +
       shown.map((v) => `<div class="tc-card">${CAL.eventCard(v, tagColor)}</div>`).join("");
     tagTip.hidden = false;
     // 위치 = 그 날짜 칸 오른쪽(칸 위쪽에 맞춤). 보이는 영역 = 창과 모니터 화면이 겹치는 부분
@@ -1546,7 +1620,7 @@
   $("ev-add-mempick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.toggleTag(b.dataset.tag, "ev-add-members"); });
   $("ev-add").addEventListener("submit", (e) => { e.preventDefault(); evAdd.submit(); });
   $("ev-add").addEventListener("input", () => { evAdd.update(); evAdd.markTags(); });
-  $("ev-add-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.setKind(b.dataset.kind); });
+  $("ev-add-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.disabled) evAdd.setKind(b.dataset.kind); });
   $("ev-add-cancel").addEventListener("click", () => evAdd.close());
   $("ev-add-del").addEventListener("click", () => evAdd.remove());
   $("ev-add-memo-btn").addEventListener("click", () => {

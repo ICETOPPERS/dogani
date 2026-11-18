@@ -34,6 +34,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QInputDialog,
                                QLabel, QLineEdit, QMessageBox, QVBoxLayout, QWidget)
 
+import holidays
 import liveupdate
 import space
 from server import CLIENT_KEY, HOST_HEADER, KEY_HEADER, TOKEN_HEADER, USER_HEADER, ShareServer
@@ -633,6 +634,11 @@ class Bridge(QObject):
         cal = self.win.app.panels.get("cal")
         if cal:
             cal.call("setCalDrag", bool(on))
+
+    @Slot(int, result=str)
+    def getHolidays(self, year):
+        """공휴일 {days, pending} — pending 이면 JS 가 조금 뒤 다시 물음"""
+        return json.dumps(holidays.get(CONFIG_DIR, year), ensure_ascii=False)
 
     @Slot(str)
     def openUrl(self, url):
