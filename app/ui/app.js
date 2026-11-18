@@ -697,7 +697,8 @@
         const i = lines[t.line] === t.raw ? t.line : lines.indexOf(t.raw);
         if (i < 0 || !TASK_BOX_RE.test(lines[i])) throw new Error("노트에서 이 할일 줄을 찾지 못했습니다 (그 사이 바뀜).");
         lines[i] = fn(lines[i]);
-        await api("/note", { date: t.note, content: lines.join(eol), base_mtime: d.mtime }, base);
+        const r = await api("/note", { date: t.note, content: lines.join(eol), base_mtime: d.mtime }, base);
+        undo.note({ sp, date: t.note, before: d.content, mtime: r && r.mtime });
         await loadSchedule(sp);
         return;
       } catch (e) {
@@ -713,6 +714,36 @@
     return [CAL.addDays(ev.start, n), CAL.addDays(ev.end, n)];
   }
 
+  /**
+   * 달력 되돌리기(Ctrl+Z): 달력에서 한 저장마다 고치기 전 파일 내용을 기억.
+   * 한 동작(여러 스페이스 저장)은 group() 으로 묶어 한 번에 되돌림. 그 사이 파일이 바뀌었으면(mtime 다름) 되돌리지 않음
+   */
+  const undo = {
+    stack: [], cur: null,
+    note(x) { if (this.cur) this.cur.push(x); else this.stack.push([x]); if (this.stack.length > 30) this.stack.shift(); },
+    async group(fn) {
+      const outer = !this.cur;
+      if (outer) this.cur = [];
+      try { return await fn(); } finally {
+        if (outer) { if (this.cur.length) this.stack.push(this.cur); this.cur = null; }
+      }
+    },
+    async pop() {
+      const g = this.stack.pop();
+      if (!g) return;
+      const errs = [];
+      for (const x of g.reverse()) {
+        const base = spBase(x.sp), url = x.date ? `/note?date=${x.date}` : "/sched-doc";
+        try {
+          const d = await api(url, undefined, base);
+          if (x.mtime && d.mtime !== x.mtime) { errs.push(`${x.sp.name}: 그 사이 파일이 바뀌어 되돌리지 않음`); continue; }
+          await api(x.date ? "/note" : "/sched-doc", { date: x.date, content: x.before, base_mtime: d.mtime }, base);
+          await loadSchedule(x.sp);
+        } catch (e) { errs.push(`${x.sp.name}: ${e.message || e}`); }
+      }
+      if (errs.length) alert("되돌리기 실패: " + errs.join(" / "));
+    },
+  };
   /** 스페이스 sp 의 일정 파일 고치기: fn(text) → 새 text. 충돌(409) 나면 다시 읽고 한 번 더 */
   async function editSchedDoc(sp, fn) {
     const base = spBase(sp);
@@ -720,7 +751,8 @@
       try {
         const d = await api("/sched-doc", undefined, base);
         if (d.no_dir) throw new Error("스페이스 폴더가 지정되지 않았습니다.");
-        await api("/sched-doc", { content: fn(d.exists ? d.content : ""), base_mtime: d.exists ? d.mtime : undefined }, base);
+        const r = await api("/sched-doc", { content: fn(d.exists ? d.content : ""), base_mtime: d.exists ? d.mtime : undefined }, base);
+        undo.note({ sp, before: d.exists ? d.content : "", mtime: r && r.mtime });
         await loadSchedule(sp);   // 달력은 rebuildSched 가 다시 그림
         return;
       } catch (e) {
@@ -734,7 +766,8 @@
    * keys 에 든 스페이스면 첫 줄을 바꾸고(목록 기호·들여쓰기 유지) 나머지는 지움. 사본이 없는 스페이스엔 끝에 덧붙임.
    * line = null 이면 모든 사본 삭제. 스페이스마다 따로 저장 → 일부 실패하면 실패한 곳만 모아 알림
    */
-  async function writeEv(ev, line, keys) {
+  const writeEv = (ev, line, keys) => undo.group(() => writeEv0(ev, line, keys));
+  async function writeEv0(ev, line, keys) {
     const copies = ev ? ev.copies || [] : [];
     const errs = [], targets = new Set([...copies.map((c) => c.sp), ...keys]);
     for (const key of targets) {
@@ -966,6 +999,42 @@
     m.style.left = Math.min(x, innerWidth - 60) + "px";
     m.style.top = Math.min(y, innerHeight - 30) + "px";
   }
+  /** 일정 위 마우스 x 가 가장자리(6px)면 start|end, 아니면 move. 할일·미정 끝(open)은 늘이기 없음 */
+  function edgeMode(el, ev, x) {
+    if (!ev || ev.task || !canEdit(ev)) return "move";
+    const r = el.getBoundingClientRect(), bar = el.classList.contains("bar");
+    if (x - r.left < 6 && ev.open !== "start" && (!bar || el.classList.contains("head"))) return "start";
+    if (r.right - x < 6 && ev.open !== "end" && (!bar || el.classList.contains("tail"))) return "end";
+    return "move";
+  }
+  // 마우스 아래 일정·칸 (Ctrl+C / Ctrl+V 대상), 가장자리면 크기 조절 커서
+  let hoverEv = null, hoverDate = null, edgeEl = null, clip = null;
+  $("cal-grid").addEventListener("mousemove", (e) => {
+    const el = e.target.closest(".ev[data-k]"), cell = e.target.closest(".cal-day");
+    hoverEv = evOf(el);
+    hoverDate = cell ? cell.dataset.date : null;
+    const edge = el && state.writable && !move && edgeMode(el, hoverEv, e.clientX) !== "move" ? el : null;
+    if (edge !== edgeEl) { if (edgeEl) edgeEl.classList.remove("edge"); if (edge) edge.classList.add("edge"); edgeEl = edge; }
+  });
+  $("cal-grid").addEventListener("mouseleave", () => { hoverEv = hoverDate = null; });
+  /** 일정 ev 를 date 날짜로 시작하게 복사 (길이·시각·태그 그대로, 같은 스페이스들에) */
+  function copyEvTo(ev, date) {
+    const o = evToObj(ev), n = dayDiff(ev.start, date);
+    if (o.s) o.s = CAL.addDays(o.s, n);
+    if (o.e) o.e = CAL.addDays(o.e, n);
+    return writeEv(null, schedLine(o), (ev.spaces || []).filter((k) => canEdit({ spaces: [k] })));
+  }
+  // 달력 창 단축키: Ctrl+C = 마우스 아래 일정 복사, Ctrl+V = 마우스 아래 칸에 붙여넣기, Ctrl+Z = 달력에서 한 마지막 변경 되돌리기
+  document.addEventListener("keydown", (e) => {
+    if (state.mode !== "cal" || !e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e.target.closest && e.target.closest("input, textarea, select, [contenteditable], #ev-add")) return;
+    const k = e.key.toLowerCase();
+    if (k === "c" && hoverEv && !hoverEv.task) { clip = hoverEv; e.preventDefault(); }
+    else if (k === "v" && clip && hoverDate && state.writable) {
+      e.preventDefault();
+      copyEvTo(clip, hoverDate).catch((err) => alert("붙여넣기 실패: " + (err.message || err)));
+    } else if (k === "z" && state.writable) { e.preventDefault(); undo.pop(); }
+  });
   $("cal-grid").addEventListener("mousedown", (e) => {
     dragged = false;
     measureCells();
@@ -975,12 +1044,8 @@
       // 일정 위 왼쪽 버튼: 옮기기 준비 (그냥 떼면 click → 수정 팝업). 읽기 전용은 안 됨
       if (e.target.closest(".ev-check")) return;   // 할일 체크 네모 = click 에서 체크
       const c = canEdit(ev) && cellAt(e.clientX, e.clientY);
-      let mode = "move";
-      if (c && ev.task) {   // 할일은 가장자리를 끌면 기간 늘이고 줄이기
-        const r = evEl.getBoundingClientRect(), bar = evEl.classList.contains("bar");
-        if (e.clientX - r.left < 6 && (!bar || evEl.classList.contains("head"))) mode = "start";
-        else if (r.right - e.clientX < 6 && (!bar || evEl.classList.contains("tail"))) mode = "end";
-      }
+      const mode = c ? edgeMode(evEl, ev, e.clientX) : "move";   // 일정·기간 가장자리 = 날짜 늘이고 줄이기
+      if (mode !== "move") document.body.classList.add("cal-resizing");
       // 완료한 할일(✅ 날)은 완료한 날에 고정: 끌어서 옮기지 않음 (클릭·체크 해제는 됨)
       if (c && !(ev.task && ev.task.plan)) move = { ev, el: evEl, mode, from: c.dataset.date, to: c.dataset.date };
       return;
@@ -1017,6 +1082,7 @@
     move.to = c.dataset.date;
     const n = dayDiff(move.from, move.to);
     move.el.classList.toggle("moving", n !== 0);
+    document.body.classList.toggle("cal-copying", n !== 0 && move.mode === "move" && e.ctrlKey && !move.ev.task);
     markRange(n ? dragRange(move.ev, move.mode, n) : null);
   });
   $("cal-grid").addEventListener("mouseover", (e) => {
@@ -1031,6 +1097,7 @@
       move = null;
       cellRects = null;
       m.el.classList.remove("moving");
+      document.body.classList.remove("cal-resizing", "cal-copying");
       markRange(null);
       if (!n) return;  // 제자리 = 클릭 (수정 팝업은 click 에서)
       dragged = true;
@@ -1040,9 +1107,14 @@
         return;
       }
       const o = evToObj(m.ev);
-      if (o.s) o.s = CAL.addDays(o.s, n);
-      if (o.e) o.e = CAL.addDays(o.e, n);
+      if (m.mode === "move") {
+        if (o.s) o.s = CAL.addDays(o.s, n);
+        if (o.e) o.e = CAL.addDays(o.e, n);
+      } else {   // 가장자리 끌기 = 날짜만 (시각은 그대로)
+        [o.s, o.e] = dragRange(m.ev, m.mode, n);
+      }
       try {
+        if (m.mode === "move" && e.ctrlKey) { await copyEvTo(m.ev, CAL.addDays(m.ev.start, n)); return; }   // Ctrl+끌기 = 복사
         await writeEv(m.ev, schedLine(o), m.ev.spaces || []);
       } catch (err) {
         alert("옮기기 실패: " + (err.message || err));
@@ -1158,21 +1230,46 @@
   $("cal-tags").addEventListener("mouseleave", () => tagHover(null));
   // 달력 일정에 마우스 올림 = 정보 카드 (기본 title 툴팁은 겹치니 뗌)
   const tagTip = $("ev-tagtip");
-  let tipEl = null;
-  $("cal-grid").addEventListener("mouseover", (e) => {
-    const el = e.target.closest(".ev[data-k]"), ev = evOf(el);
-    if (!ev || move || drag) { tagTip.hidden = true; tipEl = null; return; }
-    if (el === tipEl && !tagTip.hidden) return;
-    tipEl = el;
-    el.removeAttribute("title");
-    tagTip.innerHTML = CAL.eventCard(ev, tagColor);
+  // 일정에 마우스 = 마우스가 있는 날짜에 걸친 일정 카드를 시간 순으로 모두. 일정 밖 0.15초면 닫힘
+  // 마우스를 잠깐(0.1초) 멈춰야 뜨고 날짜를 바꿈 (막 움직일 땐 안 뜸). 일정 밖 0.15초면 닫힘
+  let tipEl = null, tipHide = 0, tipShow = 0;
+  const tipClear = () => { clearTimeout(tipHide); clearTimeout(tipShow); tagTip.hidden = true; tipEl = null; };
+  function tipRender(x, y) {
+    if (move || drag) return;
+    const el = document.elementFromPoint(x, y), evEl = el && el.closest(".ev[data-k]"), ev = evOf(evEl);
+    if (!ev) return;
+    measureCells();
+    const cell = cellAt(x, y), day = cell ? cell.dataset.date : ev.start;
+    if (day === tipEl && !tagTip.hidden) return;   // 같은 날 다른 일정으로 옮겨도 그대로 (위치 고정)
+    tipEl = day;
+    evEl.removeAttribute("title");
+    const all = (state.sched && state.sched.list || []).filter((v) => v.start <= day && (v.end || v.start) >= day);
+    const shown = all.includes(ev) ? all : all.concat(ev);   // list 는 이미 시간 순
+    const dd = parseISO(day), wk = "일월화수목금토"[dd.getDay()];
+    tagTip.innerHTML = `<div class="tc-date">${day.replace(/-/g, ".")} (${wk})</div>` +
+      shown.map((v) => `<div class="tc-card">${CAL.eventCard(v, tagColor)}</div>`).join("");
     tagTip.hidden = false;
-    const r = el.getBoundingClientRect(), w = tagTip.offsetWidth, h = tagTip.offsetHeight;
-    tagTip.style.left = Math.max(4, Math.min(r.left, innerWidth - w - 4)) + "px";
-    tagTip.style.top = (r.bottom + 4 + h <= innerHeight ? r.bottom + 4 : Math.max(4, r.top - h - 4)) + "px";
+    // 위치 = 그 날짜 칸 오른쪽(칸 위쪽에 맞춤). 보이는 영역 = 창과 모니터 화면이 겹치는 부분
+    // (창이 화면 오른쪽 밖으로 걸쳐 있으면 화면 끝까지만). 오른쪽에 안 들어가면 칸 왼쪽, 거기도 안 되면 끝에 붙임
+    const r = (cell || evEl).getBoundingClientRect(), w = tagTip.offsetWidth, h = tagTip.offsetHeight;
+    const sc = screen, sx = window.screenX, sy = window.screenY;
+    const minX = Math.max(0, (sc.availLeft || 0) - sx) + 4, maxX = Math.min(innerWidth, (sc.availLeft || 0) + sc.availWidth - sx) - 4;
+    const minY = Math.max(0, (sc.availTop || 0) - sy) + 4, maxY = Math.min(innerHeight, (sc.availTop || 0) + sc.availHeight - sy) - 4;
+    const lx = r.right + 4 + w <= maxX ? r.right + 4 : r.left - 4 - w >= minX ? r.left - 4 - w : maxX - w;
+    tagTip.style.left = Math.max(minX, lx) + "px";
+    tagTip.style.top = Math.max(minY, Math.min(r.top, maxY - h)) + "px";
+  }
+  $("cal-grid").addEventListener("mousemove", (e) => {
+    if (move || drag) return tipClear();
+    const ev = evOf(e.target.closest(".ev[data-k]"));
+    clearTimeout(tipShow);
+    if (!ev) { if (!tagTip.hidden) { clearTimeout(tipHide); tipHide = setTimeout(tipClear, 150); } return; }
+    clearTimeout(tipHide);
+    const x = e.clientX, y = e.clientY;
+    tipShow = setTimeout(() => tipRender(x, y), 100);
   });
-  $("cal-grid").addEventListener("mouseleave", () => { tagTip.hidden = true; });
-  $("cal-grid").addEventListener("mousedown", () => { tagTip.hidden = true; });
+  $("cal-grid").addEventListener("mouseleave", tipClear);
+  $("cal-grid").addEventListener("mousedown", tipClear);
   $("ev-add-tagpick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.toggleTag(b.dataset.tag); });
   $("ev-add-mempick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.toggleTag(b.dataset.tag, "ev-add-members"); });
   $("ev-add").addEventListener("submit", (e) => { e.preventDefault(); evAdd.submit(); });
@@ -1217,6 +1314,7 @@
     clearTimeout(fitTimer);
     fitTimer = setTimeout(() => { if (state.mode === "cal" && state.calView === "month") CAL.fitCells($("cal-grid")); }, 100);
   }).observe($("cal-grid"));
+  window.addEventListener("dogani-fz", () => { if (state.mode === "cal" && state.calView === "month") CAL.fitCells($("cal-grid")); });   // Ctrl+휠 = 달력 글자도 커짐 → +N 다시 셈
 
   // ------------------------------------------------------------ init
   const sameSpace = (a, b) => a && b && a.key === b.key && a.server === b.server && a.prefix === b.prefix;

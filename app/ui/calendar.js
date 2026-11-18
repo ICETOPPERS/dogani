@@ -66,7 +66,7 @@
   function eventTip(ev) {
     if (ev.task) {
       const r = ev.start === ev.end ? ev.end : `${ev.start} ~ ${ev.end}`;
-      return [`${ev.task.done ? "[완료] " : ""}${ev.title}`, r, `할일 · ${ev.task.note} 노트 (가장자리를 끌면 기간 조절)`].join("\n");
+      return [`${ev.task.done ? "[완료] " : ""}${ev.title}`, r, `할일 · ${ev.task.note} 노트`].join("\n");
     }
     const range = ev.open === "start" ? `~ ${ev.end} (시작 미정)`
       : ev.open === "end" ? `${ev.start} ~ (끝 미정)`
@@ -103,8 +103,7 @@
       row("메모", ev.memo && esc(ev.memo)) +
       row("노트", t && esc(t.note)) +
       row("작성", ev.who && ev.who.by && esc(ev.who.by)) +
-      row("수정", ev.who && ev.who.mod && esc(ev.who.mod)) +
-      (t && !t.plan ? '<div class="tc-foot">가장자리를 끌면 기간 조절 · 우클릭 = 달력에서 빼기</div>' : "");
+      row("수정", ev.who && ev.who.mod && esc(ev.who.mod));
   }
 
   /** 팀스페이스 일정의 작성·수정 팀원 (줄 끝 꼬리표) */
