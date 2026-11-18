@@ -507,6 +507,23 @@ function blockHandle(call) {
         [this.h, "dragend", () => this.end()],
       ];
       for (const [el, t, f, cap] of this.on) el.addEventListener(t, f, !!cap);
+      // 창 크기 바뀜 → 줄바꿈이 달라져 강조 높이가 어긋나므로 다시 잼 (CodeMirror 높이 갱신 뒤에)
+      this.ro = new ResizeObserver(() => this.refresh());
+      this.ro.observe(view.scrollDOM);
+    }
+    refresh() {
+      if (this.drag || this.h.hidden) return;
+      const n = this.line;
+      this.view.requestMeasure({ read: () => {}, write: () => {
+        if (this.drag || this.h.hidden || this.line !== n) return;
+        if (!n || n > this.view.state.doc.lines || !this.view.state.doc.line(n).text.trim()) this.hide(); else this.show(n);
+      } });
+    }
+    /** 창 크기·글자 크기가 바뀌어 줄 높이(줄바꿈)가 달라지면 떠 있는 강조·손잡이 위치를 다시 잡음 */
+    update(u) {
+      if (this.drag) return;
+      if (u.docChanged) this.hide();  // 줄 번호가 바뀔 수 있음 → 다음 마우스 이동 때 다시
+      else if (u.geometryChanged || u.heightChanged) this.refresh();  // 글자 크기(Ctrl+휠)·줄바꿈 변화
     }
     lineAtY(y) {
       const v = this.view, b = v.lineBlockAtHeight(y - v.documentTop);
@@ -521,7 +538,7 @@ function blockHandle(call) {
       if (this.drag || !this.view.state.facet(EditorView.editable) || this.h.contains(e.target)) return;
       const ln = this.lineAtY(e.clientY);
       if (!ln.text.trim()) { this.hide(); return; }
-      if (ln.number !== this.line || this.h.hidden) this.show(ln.number);
+      this.show(ln.number);  // 같은 줄이어도 매번 다시 잼 (창·글자 크기 바뀐 뒤 옛 크기로 남지 않게)
     }
     show(n) {
       const v = this.view, doc = v.state.doc, ln = doc.line(n), [, b] = blockLines(doc, n);
@@ -587,8 +604,8 @@ function blockHandle(call) {
       this.hide();
       call("onDragEnd", moved);
     }
-    update(u) { if ((u.docChanged || u.geometryChanged) && !this.drag) this.hide(); }
     destroy() {
+      this.ro.disconnect();
       for (const [el, t, f, cap] of this.on) el.removeEventListener(t, f, !!cap);
       this.h.remove(); this.hl.remove(); this.mark.remove();
     }
@@ -656,6 +673,9 @@ function create(parent, opts) {
 
   let readOnly = !!opts.readOnly;
   const view = new EditorView({ parent, state: EditorState.create({ doc: opts.doc || "", extensions: extensions(opts.doc || "", readOnly) }) });
+  // 글자 크기(Ctrl+휠, --fz)만 바뀌면 편집기 크기는 그대로라 CodeMirror 가 줄 높이를 다시 안 잼 → 옛 높이로 강조·클릭 위치가 어긋남
+  const remeasure = () => { if (!view.dom.isConnected) return; view.viewState.mustMeasureContent = "refresh"; view.requestMeasure(); };  // 글꼴 로드 때 CodeMirror 가 쓰는 방식 그대로
+  window.addEventListener("dogani-fz", remeasure);
 
   return {
     view,

@@ -1315,6 +1315,7 @@
     fz = Math.round(Math.min(MAX, Math.max(MIN, v)) * 100) / 100;
     document.documentElement.style.setProperty("--fz", fz);
     try { localStorage.setItem(KEY, fz); } catch {}
+    window.dispatchEvent(new Event("dogani-fz"));  // 편집기 줄 높이 다시 재기 (editor.js)
   };
   apply(fz);
   window.addEventListener("wheel", (e) => {
