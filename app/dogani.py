@@ -542,6 +542,44 @@ class TeamDialog(QDialog):
             self.accept()
 
 
+# ---------------------------------------------------------------- 저장 못 한 노트 보관 (끊김 대비)
+UNSAVED_PATH = os.path.join(CONFIG_DIR, "unsaved.json")
+_unsaved_lock = threading.Lock()
+
+
+def load_unsaved():
+    try:
+        with open(UNSAVED_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_unsaved(key, value):
+    """key(스페이스 키|날짜) 의 보관 내용 저장(value = JSON) / 지움(빈 값). 오래된 것부터 50개만 남김"""
+    with _unsaved_lock:
+        d = load_unsaved()
+        if value:
+            try:
+                d[key] = json.loads(value)
+            except ValueError:
+                return
+        elif d.pop(key, None) is None:
+            return
+        if len(d) > 50:
+            for k in sorted(d, key=lambda k: (d[k] or {}).get("at", 0) if isinstance(d[k], dict) else 0)[:len(d) - 50]:
+                del d[k]
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            tmp = UNSAVED_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False)
+            os.replace(tmp, UNSAVED_PATH)
+        except OSError:
+            pass
+
+
 # ---------------------------------------------------------------- overlay web view
 class Bridge(QObject):
     """JS(app.js) ↔ 파이썬 연결 객체 (창마다 하나)."""
@@ -591,6 +629,18 @@ class Bridge(QObject):
             return
         if isinstance(keys, list):
             self.win.app.set_cal_hidden(keys)
+
+    @Slot(result=str)
+    def getUnsaved(self):
+        return json.dumps(load_unsaved())
+
+    @Slot(str, str)
+    def setUnsaved(self, key, value):
+        save_unsaved(key, value)
+
+    @Slot(str)
+    def copyText(self, text):
+        QGuiApplication.clipboard().setText(text)
 
     @Slot(str)
     def setCalDrag(self, on):

@@ -739,3 +739,6 @@ body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
 .panel-bar .bar-side.right { justify-content: flex-end; }
 .cal-nav { display: flex; align-items: center; gap: 2px; }
 .cal-nav .header-title { flex: none; min-width: 6.5em; }
+
+/* 끊긴 스페이스의 일정 = 마지막으로 받은 내용 */
+.ev.stale { opacity: .45; }
