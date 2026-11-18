@@ -29,11 +29,13 @@
       <!-- 달력 창 -->
       <div id="view-cal" class="view" hidden>
         <div class="panel-bar" title="드래그해서 이동">
-          <button class="icon-btn" id="cal-prev" title="이전 달">&#x2039;</button>
-          <div class="header-title" id="cal-title"></div>
-          <button class="icon-btn" id="cal-next" title="다음 달">&#x203A;</button>
-          <button class="text-btn" id="cal-today">오늘</button>
-          <button class="icon-btn close-btn" title="닫기">&#x2715;</button>
+          <div class="bar-side"></div>
+          <div class="cal-nav">
+            <button class="icon-btn" id="cal-prev" title="이전 달">&#x2039;</button>
+            <div class="header-title" id="cal-title"></div>
+            <button class="icon-btn" id="cal-next" title="다음 달">&#x203A;</button>
+          </div>
+          <div class="bar-side right"><button class="icon-btn close-btn" title="닫기">&#x2715;</button></div>
         </div>
         <!-- 달력에 일정을 보일 스페이스 (체크 끄면 숨김, 할일 창 일정 줄도 같이) -->
         <div class="cal-filters">

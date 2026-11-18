@@ -52,7 +52,7 @@ html, body {
   background: transparent;
   overflow: hidden;
   font-family: "Segoe UI", "Malgun Gothic", "맑은 고딕", sans-serif;
-  font-size: 14px;
+  font-size: calc(14px * var(--fz, 1));   /* Ctrl+휠: 글자만 (보더·여백 고정) */
   color: var(--text);
   user-select: none;
 }
@@ -272,8 +272,8 @@ body.writable .task-checkbox { cursor: pointer; }
   left: .05em;
   top: .03em;
   display: block;
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--fz, 1));
+  height: calc(15px * var(--fz, 1));
   border: 1.5px solid var(--text-faint);
   border-radius: 4px;
 }
@@ -281,10 +281,10 @@ body.writable .task-checkbox { cursor: pointer; }
 .task-checkbox.checked::after {
   content: "";
   position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 4px;
-  height: 8px;
+  left: calc(4px * var(--fz, 1));
+  top: calc(1px * var(--fz, 1));
+  width: calc(4px * var(--fz, 1));
+  height: calc(8px * var(--fz, 1));
   border: solid #fff;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
@@ -722,3 +722,9 @@ body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
 .cal-tags label.tag-chip:not(:has(input:checked)) { opacity: .35; }
 .ev-add-tagpick button.tag-chip.on { box-shadow: inset 0 0 0 1px var(--tc); font-weight: 600; }
 .person-ic { width: 10px; height: 10px; fill: currentColor; flex: none; }
+
+/* 달력 머리줄: 화살표는 월 양옆, 양쪽 빈 칸은 나중에 버튼 넣을 자리 */
+.panel-bar .bar-side { flex: 1; display: flex; align-items: center; gap: 2px; min-width: 0; }
+.panel-bar .bar-side.right { justify-content: flex-end; }
+.cal-nav { display: flex; align-items: center; gap: 2px; }
+.cal-nav .header-title { flex: none; min-width: 6.5em; }

@@ -593,7 +593,6 @@
 
   $("cal-prev").addEventListener("click", () => { state.calYM = addMonths(state.calYM, -1); loadMonth(); });
   $("cal-next").addEventListener("click", () => { state.calYM = addMonths(state.calYM, 1); loadMonth(); });
-  $("cal-today").addEventListener("click", () => { state.calYM = state.today.slice(0, 7); loadMonth(); });
   $("cal-grid").addEventListener("click", (e) => {
     if (dragged) { dragged = false; return; }  // 드래그로 기간 고르거나 일정 옮긴 뒤의 click 은 무시
     const ev = evOf(e.target.closest(".ev[data-k]"));
@@ -1305,4 +1304,23 @@
       space: { key: "test", name: q.get("server") || "test", server: q.get("server") || "", prefix: q.get("prefix") || "/api", kind: "me", status: "offline" },
     });
   }
+})();
+
+// Ctrl+휠 = 글자 크기만 (기본 페이지 확대는 보더·여백까지 커져서 막음). 75~150%, Ctrl+0 원래대로
+(() => {
+  const KEY = "dogani-fz", MIN = 0.75, MAX = 1.5, STEP = 0.05;
+  let fz = 1;
+  try { fz = Math.min(MAX, Math.max(MIN, parseFloat(localStorage.getItem(KEY)) || 1)); } catch {}
+  const apply = (v) => {
+    fz = Math.round(Math.min(MAX, Math.max(MIN, v)) * 100) / 100;
+    document.documentElement.style.setProperty("--fz", fz);
+    try { localStorage.setItem(KEY, fz); } catch {}
+  };
+  apply(fz);
+  window.addEventListener("wheel", (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    apply(fz + (e.deltaY < 0 ? STEP : -STEP));
+  }, { passive: false, capture: true });
+  window.addEventListener("keydown", (e) => { if (e.ctrlKey && e.key === "0") { e.preventDefault(); apply(1); } }, true);
 })();
