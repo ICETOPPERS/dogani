@@ -67,13 +67,18 @@ class Bullet extends WidgetType {
 }
 /** 목록 앞 들여쓰기(탭/스페이스) → 단계마다 고정 폭 + 가이드선 (옵시디언처럼) */
 class Indent extends WidgetType {
-  constructor(lvl) { super(); this.lvl = lvl; }
-  eq(o) { return o.lvl === this.lvl; }
+  /** cont[k] = k 단계 세로선이 이 줄 아래로 이어짐(뒤에 같은 단계 형제 있음). 마지막 단계는 ╰ 꺾임 */
+  constructor(lvl, cont) { super(); this.lvl = lvl; this.cont = cont; }
+  eq(o) { return o.lvl === this.lvl && o.cont.join() === this.cont.join(); }
   toDOM() {
     const s = document.createElement("span");
     s.className = "cm-indent";
     s.style.width = `calc(${this.lvl} * var(--ind))`;
-    for (let k = 0; k < this.lvl; k++) s.insertAdjacentHTML("beforeend", `<span class="cm-guide" style="--k:${k}"></span>`);
+    for (let k = 0; k < this.lvl; k++) {
+      const last = k === this.lvl - 1;
+      if (this.cont[k]) s.insertAdjacentHTML("beforeend", `<span class="cm-guide" style="--k:${k}"></span>`);
+      if (last) s.insertAdjacentHTML("beforeend", `<span class="cm-guide cm-elbow" style="--k:${k}"></span>`);
+    }
     return s;
   }
 }
@@ -279,10 +284,11 @@ function build(view) {
           const quote = /^\s*>/.test(l.text);
           if (!quote) {
             if (ws) {
-              decos.push(Decoration.replace({ widget: new Indent(lvl) }).range(l.from, l.from + ws));
+              decos.push(Decoration.replace({ widget: new Indent(lvl, guideCont(node.node, lvl)) }).range(l.from, l.from + ws));
               atomic.push([l.from, l.from + ws]);
             }
-            decos.push(line("cm-li", { style: `--lvl:${lvl}` }).range(l.from));
+            const kids = node.node.getChild("BulletList") || node.node.getChild("OrderedList");
+            decos.push(line("cm-li" + (kids ? " has-kids" : ""), { style: `--lvl:${lvl}` }).range(l.from));
           }
           const markNode = node.node.getChild("ListMark");
           const task = node.node.getChild("Task");
@@ -367,6 +373,17 @@ function inRanges(ranges, from, to, whole) {
 function hasAncestor(node, name) {
   for (let p = node.parent; p; p = p.parent) if (p.name === name) return true;
   return false;
+}
+/** 단계별 세로선 이어짐: 자신·조상 ListItem 뒤에 형제 ListItem 이 있으면 그 단계 선이 아래로 계속 */
+function guideCont(item, lvl) {
+  const cont = [];
+  let n = item;
+  for (let k = lvl - 1; k >= 0 && n; k--) {
+    cont[k] = n.nextSibling?.name === "ListItem";
+    n = n.parent?.parent;
+    while (n && n.name !== "ListItem") n = n.parent;
+  }
+  return cont;
 }
 function listDepth(node) {
   let d = 0;

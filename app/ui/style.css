@@ -240,6 +240,21 @@ body.writable .task-checkbox { cursor: pointer; }
   border-left: 1px solid var(--guide);
   pointer-events: none;
 }
+/* 트리 연결선: 부모 체크 아래에서 내려와 ╰ 로 둥글게 꺾여 자기 기호로 */
+.cm-guide.cm-elbow {
+  border: 0;
+  bottom: auto;
+  height: .8em;
+  width: calc(var(--ind) - .55em);
+  border-left: 1px solid var(--guide);
+  border-bottom: 1px solid var(--guide);
+  border-bottom-left-radius: .45em;
+}
+.cm-li.has-kids::before {   /* 부모 기호 아래 → 줄 끝까지 */
+  content: ""; position: absolute; top: 1.15em; bottom: 0;
+  left: calc(var(--lvl) * var(--ind) + .5em);
+  border-left: 1px solid var(--guide); pointer-events: none;
+}
 .cm-bullet-wrap, .cm-task-wrap { display: inline-block; width: var(--mk); position: relative; height: 1em; vertical-align: baseline; }
 .cm-bullet-wrap .lp-bullet {
   position: absolute;
