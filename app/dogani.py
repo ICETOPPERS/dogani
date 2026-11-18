@@ -43,8 +43,8 @@ from team import TeamError, TeamHost, clean_name, verify_hello
 APP_NAME = "dogani"
 CONFIG_DIR = os.environ.get("DOGANI_HOME") or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "dogani")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "dogani.json")
-TEAM_DIR = os.path.join(CONFIG_DIR, "team")   # 팀 호스트의 서명 키·초대장 (스페이스 id 별). 예전엔 팀 데이터 전부
-LEGACY_TEAM_SPACE = os.path.join(TEAM_DIR, "notes")   # v26.11.10 이전 공용 노트 폴더 = 기본 팀스페이스
+TEAM_DIR = os.path.join(CONFIG_DIR, "team")   # 팀 호스트의 서명 키·초대장 (스페이스 id 별)
+LEGACY_TEAM_SPACE = os.path.join(TEAM_DIR, "notes")   # v26.11.18 이전 팀 호스트의 기본 폴더 (migrate_spaces 에만 씀)
 RECENT_MAX = 10
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # exe 면 런처(launcher.py)가 고른 코드 폴더
 UI_DIR = os.path.join(BASE_DIR, "ui")
@@ -73,29 +73,14 @@ DEFAULT_CONFIG = {
 # ---------------------------------------------------------------- config
 def load_config():
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    saved = space.read_json(CONFIG_PATH)
-    if saved is None:
-        saved = migrate_old_config()
-    cfg.update(saved)
-    migrate_windows(cfg)
+    cfg.update(space.read_json(CONFIG_PATH) or {})
     # v26.11.17 이전: 네비게이션 바 + "dogani 표시"(전체 숨김) → 트레이에서 할일·달력 창을 하나씩 켬
     cfg["windows"].pop("nav", None)
     if cfg.pop("visible", True) is False:
         for w in cfg["windows"].values():
             w["open"] = False
-    # v26.11.17 이전: 볼트(vault) → 스페이스
-    for old, new in LEGACY_KEYS:
-        # 새 exe 는 두 키를 같게 저장 → 다르면 예전 exe 가 고친 것이므로 예전 키가 최신
-        if old in cfg:
-            cfg[new] = cfg.pop(old)
     if not isinstance(cfg.get("cal_hidden"), list):
         cfg["cal_hidden"] = []
-    # v26.11.10 이전: todo 폴더 + 내 노트 공유(일시 중지·차단·팀원 전용·주소 추가) → 스페이스, 공유 없음
-    old_dir = cfg.pop("todo_dir", "")
-    if old_dir and not cfg.get("space_dir"):
-        cfg["space_dir"] = old_dir
-    for k in ("paused", "team_only", "blocked", "servers"):
-        cfg.pop(k, None)
     migrate_spaces(cfg)
     if not isinstance(cfg.get("spaces"), list):
         cfg["spaces"] = []
@@ -128,38 +113,6 @@ def migrate_spaces(cfg):
         spaces.append({"kind": "join", "id": "", "host": t["host"], "pc": t.get("pc", ""), "token": t["token"],
                        "mid": t.get("id", ""), "pub": t.get("pub", ""), "name": t.get("team", ""), "legacy": TEAM})
     cfg["spaces"] = spaces
-
-
-def migrate_windows(cfg):
-    """v26.11.06 이전: 사람마다 네비게이션 바(overlays) → windows (네비게이션 바 위치는 버림)"""
-    old = cfg.pop("overlays", None)
-    if cfg["windows"] or not old:
-        return
-    me = old.get(ME) or {}
-    cfg["windows"] = {}
-    for mode in ("note", "cal"):
-        if isinstance(me.get(mode), dict):
-            cfg["windows"][mode] = {k: me[mode].get(k) for k in ("pos", "panel", "open")}
-
-
-def migrate_old_config():
-    """v26.11.04.01 이전(서버/클라이언트 분리) 설정을 가져온다."""
-    cfg = {}
-    old_server = space.read_json(os.path.join(CONFIG_DIR, "server.json")) or {}
-    old_client = space.read_json(os.path.join(CONFIG_DIR, "client.json")) or {}
-    for k in ("port", "todo_dir", "paused", "blocked"):
-        if k in old_server:
-            cfg[k] = old_server[k]
-    for k in ("on_top", "opacity", "theme"):
-        if k in old_client:
-            cfg[k] = old_client[k]
-    if old_client.get("server"):
-        cfg["servers"] = [old_client["server"]]
-    return cfg
-
-
-# v26.11.17 이전 볼트(vault) 이름 → 스페이스 (읽을 때만 바꿈)
-LEGACY_KEYS = (("vault", "space_dir"), ("vaults", "space_dirs"), ("team_vault", "team_space_dir"))
 
 
 def save_config(cfg):
@@ -237,7 +190,6 @@ def http_json(server, path, body=None, token="", name="", timeout=4):
 
 # ---------------------------------------------------------------- autostart
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-OLD_RUN_NAMES = ("DoganiServer", "DoganiClient")
 
 
 def launch_command():
@@ -268,24 +220,6 @@ def set_autostart(enable):
                 winreg.DeleteValue(key, APP_NAME)
             except OSError:
                 pass
-
-
-def migrate_autostart():
-    """예전 DoganiServer/DoganiClient 자동 실행 항목이 있으면 지우고 dogani 로 바꾼다."""
-    found = False
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_ALL_ACCESS) as key:
-            for name in OLD_RUN_NAMES:
-                try:
-                    winreg.QueryValueEx(key, name)
-                    winreg.DeleteValue(key, name)
-                    found = True
-                except OSError:
-                    pass
-    except OSError:
-        return
-    if found:
-        set_autostart(True)
 
 
 # ---------------------------------------------------------------- desktop pin
@@ -440,7 +374,9 @@ class Tray(QObject):
         Item = pystray.MenuItem
         app, cfg = self.app, self.app.cfg
         return [
-            Item("할일 표시", self.emit("toggle_panel", "note"), checked=lambda i: "note" in app.panels, default=True),
+            # 좌클릭 = 기본 항목. 메뉴엔 안 보이고 달력 → 할일 → 둘 다 → 닫기 순으로 돌림
+            Item("창 순환", self.emit("cycle_panels"), default=True, visible=False),
+            Item("할일 표시", self.emit("toggle_panel", "note"), checked=lambda i: "note" in app.panels),
             Item("달력 표시", self.emit("toggle_panel", "cal"), checked=lambda i: "cal" in app.panels),
             pystray.Menu.SEPARATOR,
             Item(f"내 이름: {cfg['name']}", self.emit("rename")),
@@ -1090,10 +1026,9 @@ class doganiApp(QObject):
             if not quiet:
                 QMessageBox.warning(None, APP_NAME, f"폴더가 없습니다.\n{d}")
             return None
-        legacy = TEAM_DIR if os.path.normcase(os.path.abspath(d)) == os.path.normcase(os.path.abspath(LEGACY_TEAM_SPACE)) else None
         new = not os.path.exists(os.path.join(space.meta_dir(d), "team.json"))
         try:
-            host = TeamHost(d, TEAM_DIR, self.cfg["name"], legacy_dir=legacy)
+            host = TeamHost(d, TEAM_DIR, self.cfg["name"])
         except OSError as ex:
             if not quiet:
                 QMessageBox.warning(None, APP_NAME, f"스페이스를 열지 못했습니다.\n{ex}")
@@ -1104,7 +1039,7 @@ class doganiApp(QObject):
                 QMessageBox.warning(None, APP_NAME, "이미 열려 있는 스페이스와 같은 스페이스입니다.\n"
                                     "폴더를 복사했다면 복사본의 .dogani 폴더를 지운 뒤 다시 열어 주세요.")
             return None
-        if new and not legacy:
+        if new:
             host.rename_team(e.get("name") or os.path.basename(os.path.normpath(d)))
         e["id"] = host.space_id
         e["name"] = host.name   # 폴더가 없을 때 보일 이름
@@ -1519,6 +1454,19 @@ class doganiApp(QObject):
             win.deleteLater()
         self.save_later()
 
+    # 트레이 좌클릭 순서. 지금 열린 창 조합의 다음 것으로 바꿈 (네 조합을 모두 담아 어느 상태에서든 이어짐)
+    PANEL_CYCLE = (("cal",), ("note",), ("note", "cal"), ())
+
+    def cycle_panels(self):
+        now = tuple(m for m in ("note", "cal") if m in self.panels)
+        order = self.PANEL_CYCLE   # 조합 안 순서를 now 와 같게(note, cal) 적어 둠
+        nxt = order[(order.index(now) + 1) % len(order)]
+        for mode in ("note", "cal"):
+            if mode in nxt and mode not in self.panels:
+                self.show_panel(mode)
+            elif mode not in nxt and mode in self.panels:
+                self.close_panel(mode)
+
     def toggle_panel(self, mode):
         if mode in self.panels:
             self.close_panel(mode)
@@ -1614,6 +1562,8 @@ class doganiApp(QObject):
         share = self.share
         if name == "toggle_panel":
             self.toggle_panel(arg)
+        elif name == "cycle_panels":
+            self.cycle_panels()
         elif name == "select_space":
             self.select_space(arg)
         elif name == "rename":
@@ -1698,7 +1648,6 @@ def main():
     if args.name and clean_name(args.name):
         cfg["name"] = clean_name(args.name)
     save_config(cfg)
-    migrate_autostart()
 
     app = doganiApp(qapp, cfg)
     app.start()

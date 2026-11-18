@@ -114,7 +114,7 @@ class TeamHost:
 
     PRIVATE = ("sign_key", "invites")   # 스페이스에 두지 않는 값
 
-    def __init__(self, root, key_dir, owner_name, legacy_dir=None):
+    def __init__(self, root, key_dir, owner_name):
         from server import Hub, NoteStore  # 순환 import 방지
         self.lock = threading.Lock()
         self.root = self.notes_dir = root
@@ -123,7 +123,7 @@ class TeamHost:
         self.space_id = meta["id"]
         self.path = os.path.join(space.meta_dir(root), "team.json")
         self.key_path = os.path.join(key_dir, f"{meta['id']}.json")
-        self.data = self._load(legacy_dir)
+        self.data = self._load()
         if self.data.pop("_dirty", False):   # 새 서명 키는 바로 저장 (안 그러면 재시작마다 키가 바뀜)
             self._save()
         self.pub = public_key(self.data["sign_key"])
@@ -140,43 +140,20 @@ class TeamHost:
         self.owner_id = self._ensure_owner(owner_name)
 
     # -- storage
-    def _load(self, legacy_dir):
-        read = space.read_json
-        team, keys = read(self.path), read(self.key_path)
-        data = {**(team or {}), **(keys or {})}
-        legacy = os.path.join(legacy_dir, "team.json") if legacy_dir else ""
-        if team is None and keys is None and legacy and os.path.exists(legacy):
-            # v26.11.10 이전: %APPDATA%\dogani\team\team.json 하나에 다 있었음 → 나눠 저장, 예전 파일은 이름만 바꿈
-            data = read(legacy) or {}
-            data["_dirty"] = True
-            data["_legacy"] = legacy
+    def _load(self):
+        data = {**(space.read_json(self.path) or {}), **(space.read_json(self.key_path) or {})}
         data.setdefault("name", "팀스페이스")
-        # 예전 HMAC 비밀키는 팀원 PC 에 퍼져 있어서 위조에 쓰일 수 있음 → 버리고 서명 키로 교체
-        # (예전 토큰은 모두 무효, 팀원은 초대장으로 한 번 다시 참여)
-        if "secret" in data or "sign_key" not in data:
-            data.pop("secret", None)
-            data.setdefault("sign_key", secrets.token_hex(32))
-            data["_dirty"] = True
-        # 예전 공용 참여 코드·PIN 은 초대장으로 바뀜 → 지움 (이미 들어온 팀원 토큰은 그대로 유효)
-        if data.pop("code", None) is not None:
+        if "sign_key" not in data:   # 새 팀: 서명 키를 만들고 바로 저장
+            data["sign_key"] = secrets.token_hex(32)
             data["_dirty"] = True
         data.setdefault("members", {})
-        for m in data["members"].values():
-            if m.pop("pin", 0) != 0:
-                data["_dirty"] = True
         data.setdefault("invites", {})
         return data
 
     def _save(self):
-        legacy = self.data.pop("_legacy", None)
         # 키 파일 먼저 (스페이스만 저장되고 키가 없으면 다음 실행에 새 키 = 모든 토큰 무효)
         space.write_json(self.key_path, {k: self.data[k] for k in self.PRIVATE})
         space.write_json(self.path, {k: v for k, v in self.data.items() if k not in self.PRIVATE})
-        if legacy:
-            try:
-                os.replace(legacy, legacy + ".migrated")
-            except OSError:
-                pass
 
     @property
     def name(self):
