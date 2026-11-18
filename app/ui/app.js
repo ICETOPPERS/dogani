@@ -1244,14 +1244,19 @@
   }
   // 마우스 아래 일정·칸 (Ctrl+C / Ctrl+V 대상), 가장자리면 크기 조절 커서
   let hoverEv = null, hoverDate = null, edgeEl = null, clip = null;
+  // 칸 강조(.hov)도 여기서: 바뀔 때만 클래스 1개 토글 (CSS :has(:hover) 는 이동마다 격자 전체 재계산이라 느림)
+  let hovCell = null;
+  const setHov = (c) => { if (c !== hovCell) { if (hovCell) hovCell.classList.remove("hov"); if (c) c.classList.add("hov"); hovCell = c; } };
   $("cal-grid").addEventListener("mousemove", (e) => {
     const el = e.target.closest(".ev[data-k]"), cell = e.target.closest(".cal-day");
+    setHov(el ? null : cell);
     hoverEv = evOf(el);
     hoverDate = cell ? cell.dataset.date : null;
+    // 가장자리 판정(레이아웃 읽기)은 쓰기 가능일 때만
     const edge = el && state.writable && !move && edgeMode(el, hoverEv, e.clientX) !== "move" ? el : null;
     if (edge !== edgeEl) { if (edgeEl) edgeEl.classList.remove("edge"); if (edge) edge.classList.add("edge"); edgeEl = edge; }
   });
-  $("cal-grid").addEventListener("mouseleave", () => { hoverEv = hoverDate = null; });
+  $("cal-grid").addEventListener("mouseleave", () => { hoverEv = hoverDate = null; setHov(null); });
   /** 일정 ev 를 date 날짜로 시작하게 복사 (길이·시각·태그 그대로, 같은 스페이스들에) */
   function copyEvTo(ev, date) {
     const o = evToObj(ev), n = dayDiff(ev.start, date);

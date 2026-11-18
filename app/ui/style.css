@@ -395,7 +395,7 @@ body.writable .cm-table-widget { cursor: text; }
   cursor: pointer;
   border: 1px solid transparent;
 }
-.cal-day:hover:not(:has(.ev[data-k]:hover)) { background: var(--bg-hover); }  /* 일정 위면 칸 강조 안 함 (띠는 시작 칸 안에 있어서 첫 칸만 밝아짐) */
+.cal-day.hov { background: var(--bg-hover); }  /* JS(mousemove)가 붙임: 일정 위면 안 붙임. :has(:hover) 는 마우스 움직일 때마다 전체 스타일 재계산이라 씀 */
 .cal-day { position: relative; }
 .cal-day.other { opacity: .35; }
 .cal-day.today { border-color: var(--accent); }
@@ -634,7 +634,7 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .ev-tagtip .tc-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-weight: 600; font-size: 14px; padding-left: 6px; border-left: 3px solid var(--ev); margin-bottom: 2px; word-break: break-all; }
 .ev-tagtip .tc-badge { font-weight: normal; font-size: 11px; padding: 0 5px; border-radius: 3px; background: color-mix(in srgb, var(--ev) 18%, transparent); color: var(--text-muted); }
 .ev-tagtip .tc-row { display: flex; gap: 8px; align-items: baseline; }
-.ev-tagtip .tc-k { flex: none; width: 44px; color: var(--text-muted); }
+.ev-tagtip .tc-k { flex: none; min-width: 44px; white-space: nowrap; color: var(--text-muted); }
 .ev-tagtip .tc-v { display: flex; flex-wrap: wrap; gap: 3px; white-space: pre-wrap; word-break: break-all; }
 .ev-tagtip .tc-dim { color: var(--text-muted); }
 .ev-tagtip .tc-chip, .ev-add-tagpick button { display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); }

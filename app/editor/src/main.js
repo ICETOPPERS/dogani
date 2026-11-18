@@ -534,11 +534,19 @@ function blockHandle(call) {
       const v = this.view, sr = v.scrollDOM.getBoundingClientRect();
       return [top + v.documentTop - sr.top + v.scrollDOM.scrollTop, left - sr.left + v.scrollDOM.scrollLeft];
     }
+    /** mousemove 는 프레임보다 자주 옴 → 프레임당 한 번, 줄이 바뀔 때만 잼 (크기 변화는 update·ResizeObserver 의 refresh 가 맡음) */
     hover(e) {
       if (this.drag || !this.view.state.facet(EditorView.editable) || this.h.contains(e.target)) return;
-      const ln = this.lineAtY(e.clientY);
-      if (!ln.text.trim()) { this.hide(); return; }
-      this.show(ln.number);  // 같은 줄이어도 매번 다시 잼 (창·글자 크기 바뀐 뒤 옛 크기로 남지 않게)
+      this.y = e.clientY;
+      if (this.raf) return;
+      this.raf = requestAnimationFrame(() => {
+        this.raf = 0;
+        if (this.drag) return;
+        const ln = this.lineAtY(this.y);
+        if (!ln.text.trim()) { this.hide(); return; }
+        if (ln.number === this.line && !this.h.hidden) return;
+        this.show(ln.number);
+      });
     }
     show(n) {
       const v = this.view, doc = v.state.doc, ln = doc.line(n), [, b] = blockLines(doc, n);
@@ -559,7 +567,7 @@ function blockHandle(call) {
       Object.assign(this.hl.style, { top: top + "px", left: Math.max(0, left - 20) + "px", height: last.bottom - first.top + "px" });
       this.h.hidden = this.hl.hidden = false;
     }
-    hide() { this.h.hidden = this.hl.hidden = this.mark.hidden = true; }
+    hide() { this.line = 0; this.h.hidden = this.hl.hidden = this.mark.hidden = true; }
     start(e) {
       const v = this.view, doc = v.state.doc;
       if (!this.line || this.line > doc.lines) { e.preventDefault(); return; }
@@ -605,6 +613,7 @@ function blockHandle(call) {
       call("onDragEnd", moved);
     }
     destroy() {
+      cancelAnimationFrame(this.raf);
       this.ro.disconnect();
       for (const [el, t, f, cap] of this.on) el.removeEventListener(t, f, !!cap);
       this.h.remove(); this.hl.remove(); this.mark.remove();
