@@ -128,7 +128,7 @@ html, body {
 .lp-host .cm-editor { flex: 1; min-height: 0; border-radius: 6px; }
 .lp-host .cm-editor.cm-focused { outline: none; }
 #note-body .cm-scroller { font-family: inherit; line-height: 1.6; overflow-y: auto; }
-#note-body .cm-content { padding: 8px 16px 40px 30px; caret-color: var(--text); }
+#note-body .cm-content { padding: 8px 16px 40px 22px; caret-color: var(--text); }
 #note-body .cm-line { padding: 0; }
 #note-body .cm-cursor { border-left-color: var(--text); }
 #note-body .cm-selectionBackground { background: color-mix(in srgb, var(--accent) 22%, transparent) !important; }
@@ -652,11 +652,13 @@ body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
 /* 줄(블록) 손잡이·강조·놓을 자리 (editor.js blockHandle, .cm-scroller 안 절대 위치) */
 .cm-block-hl { position: absolute; right: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 5%, transparent); pointer-events: none; }
 .cm-block-handle {
-  position: absolute; z-index: 5; width: 18px; height: 22px; display: flex; align-items: center; justify-content: center;
+  position: absolute; z-index: 5; width: 16px; height: 22px; display: flex; align-items: center; justify-content: center;
   border-radius: 4px; color: var(--text-muted); cursor: grab;
 }
 .cm-block-handle svg { width: 10px; height: 16px; fill: currentColor; }
-.cm-block-handle:hover { background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text); }
+.cm-block-handle:hover { color: var(--text); }
 .cm-block-handle:active { cursor: grabbing; }
 .cm-drop-mark { position: absolute; right: 8px; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
 .cm-block-hl[hidden], .cm-block-handle[hidden], .cm-drop-mark[hidden] { display: none; }
+
+#ev-add-spaces label.sp-hidden { opacity: .55; }

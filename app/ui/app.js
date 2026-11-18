@@ -760,11 +760,10 @@
       const hasMemo = !!(o && o.memo);
       $("ev-add-memo-row").hidden = $("ev-add-memo-k").hidden = !hasMemo;
       $("ev-add-memo-btn").hidden = hasMemo;
-      // 스페이스 고르기: 보이는 스페이스만 (새 일정 = 지금 보는 스페이스, 수정 = 그 일정이 있는 스페이스들)
+      // 스페이스 고르기: 숨긴 것 포함 전부 (새 일정 = 지금 보는 스페이스, 수정 = 그 일정이 있는 스페이스들)
       const keys = ev ? ev.spaces || [] : [state.space && state.space.key];
-      // 지금 보는 스페이스는 숨겼어도 고를 수 있게 (화면 공유 중에 새 일정 추가)
-      const cur = state.space && !state.calHidden.has(state.space.key) ? null : schedSpaces().find((s) => state.space && s.key === state.space.key);
-      $("ev-add-spaces").innerHTML = (cur ? [cur, ...shownSpaces()] : shownSpaces()).map((sp) => `<label title="${sp.kind === "me" ? "개인" : "팀스페이스"}">` +
+      // 숨긴(체크 끈) 스페이스도 고를 수 있게 모두 띄움 (흐리게 표시)
+      $("ev-add-spaces").innerHTML = schedSpaces().map((sp) => `<label title="${sp.kind === "me" ? "개인" : "팀스페이스"}${state.calHidden.has(sp.key) ? " (달력에서 숨김)" : ""}"${state.calHidden.has(sp.key) ? ' class="sp-hidden"' : ""}>` +
         `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) ? " disabled" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
@@ -910,6 +909,12 @@
         else if (r.right - e.clientX < 6 && (!bar || evEl.classList.contains("tail"))) mode = "end";
       }
       if (c) move = { ev, el: evEl, mode, from: c.dataset.date, to: c.dataset.date };
+      return;
+    }
+    if (ev && e.button === 2) {
+      // 일정·할일 위 오른쪽 버튼 = 새 일정 말고 바로 그 항목 편집 (할일 = 노트 열기)
+      if (ev.task) { if (bridge) bridge.openNote(ev.task.note); }
+      else if (canEdit(ev)) evAdd.open("", "", e.clientX, e.clientY, ev);
       return;
     }
     const cell = e.target.closest(".cal-day");

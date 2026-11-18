@@ -489,14 +489,17 @@ function blockHandle(call) {
     show(n) {
       const v = this.view, doc = v.state.doc, ln = doc.line(n), [, b] = blockLines(doc, n);
       const first = v.lineBlockAt(ln.from), last = v.lineBlockAt(doc.line(b).from);
-      const ws = ln.text.match(/^\s*/)[0].length;
-      const c = v.coordsAtPos(ln.from + ws, 1) || v.coordsAtPos(ln.from, 1);
-      const x = c ? c.left : v.contentDOM.getBoundingClientRect().left;
-      const [top, left] = this.rel(first.top, x);
-      const lh = c ? c.bottom - c.top : v.defaultLineHeight;
+      // 손잡이는 들여쓰기(하위 할일)·헤더·가로줄 상관없이 같은 x (본문 왼쪽 여백 안), 강조 블록이 손잡이까지 감쌈
+      const dom = v.domAtPos(ln.from).node, lineEl = dom && (dom.nodeType === 1 ? dom : dom.parentElement).closest(".cm-line");
+      const cr = v.contentDOM.getBoundingClientRect(), padL = parseFloat(getComputedStyle(v.contentDOM).paddingLeft) || 0;
+      const [top, left] = this.rel(first.top, cr.left + padL);
+      // 첫 줄 높이: 헤더·가로줄은 글자 좌표가 숨은 기호 자리라 어긋나서 줄 요소 기준
+      const c = /^\s*(#{1,6}\s|[-*_](\s*[-*_]){2,}\s*$)/.test(ln.text) ? null : v.coordsAtPos(ln.from + ln.text.match(/^\s*/)[0].length, 1);
+      let lh = c ? c.bottom - c.top : lineEl ? parseFloat(getComputedStyle(lineEl).lineHeight) || lineEl.getBoundingClientRect().height : v.defaultLineHeight;
+      lh = Math.min(lh, first.height);
       this.line = n;
-      Object.assign(this.h.style, { top: top + (lh - 22) / 2 + "px", left: Math.max(0, left - 24) + "px" });
-      Object.assign(this.hl.style, { top: top + "px", left: Math.max(0, left - 4) + "px", height: last.bottom - first.top + "px" });
+      Object.assign(this.h.style, { top: top + (lh - 22) / 2 + "px", left: Math.max(0, left - 18) + "px" });
+      Object.assign(this.hl.style, { top: top + "px", left: Math.max(0, left - 20) + "px", height: last.bottom - first.top + "px" });
       this.h.hidden = this.hl.hidden = false;
     }
     hide() { this.h.hidden = this.hl.hidden = this.mark.hidden = true; }
