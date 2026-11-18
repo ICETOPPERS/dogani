@@ -192,7 +192,7 @@ body.writable .task-checkbox { cursor: pointer; }
 /* 라이브 프리뷰 (editor.js 가 붙이는 cm-* 클래스) */
 .markdown-rendered { --ind: 1.6em; --mk: 1.6em; }
 .cm-h { font-weight: 700; line-height: 1.35; padding-top: .35em !important; }
-.cm-h1 { font-size: 1.55em; }
+.cm-h1 { font-size: 1.55em; padding-bottom: .25em !important; border-bottom: 1px solid var(--border); }   /* 제목 1 밑 가로줄 (디자인) */
 .cm-h2 { font-size: 1.35em; }
 .cm-h3 { font-size: 1.2em; }
 .cm-h4 { font-size: 1.1em; }
