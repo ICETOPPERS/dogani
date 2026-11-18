@@ -649,7 +649,7 @@ function create(parent, opts) {
     handle,
     ro.of(readOnlyExt(r)),
     EditorView.updateListener.of((u) => {
-      if (u.docChanged) call("onChange", u.state.doc.toString(), u.transactions.some((tr) => tr.isUserEvent("input.toggle")));
+      if (u.docChanged && !u.transactions.some((tr) => tr.isUserEvent("dogani.merge"))) call("onChange", u.state.doc.toString(), u.transactions.some((tr) => tr.isUserEvent("input.toggle")));
       if (u.focusChanged) call(u.view.hasFocus ? "onFocus" : "onBlur");
     }),
     EditorView.domEventHandlers({
@@ -686,6 +686,19 @@ function create(parent, opts) {
       view.setState(EditorState.create({ doc: text, extensions: extensions(text, readOnly) }));
       view.scrollDOM.scrollTop = keepScroll ? top : 0;
     },
+    /** 다른 곳에서 고친 내용을 합쳐 넣음: 바뀐 구간만 바꿔 커서·스크롤·실행 취소 기록 유지 (onChange 안 부름) */
+    mergeDoc(text) {
+      const cur = view.state.doc.toString();
+      if (cur === text) return;
+      let a = 0;
+      while (a < cur.length && a < text.length && cur[a] === text[a]) a++;
+      let b = 0;
+      while (b < cur.length - a && b < text.length - a && cur[cur.length - 1 - b] === text[text.length - 1 - b]) b++;
+      view.dispatch({
+        changes: { from: a, to: cur.length - b, insert: text.slice(a, text.length - b) },
+        annotations: [Transaction.addToHistory.of(false), Transaction.userEvent.of("dogani.merge")],
+      });
+    },
     setReadOnly(r) {
       readOnly = !!r;
       view.dispatch({ effects: ro.reconfigure(readOnlyExt(readOnly)) });
@@ -704,6 +717,8 @@ function create(parent, opts) {
       view.dispatch({ effects: [setHl.of(at), EditorView.scrollIntoView(at, { y: "center" })] });
     },
     hasFocus: () => view.hasFocus,
+    /** 한글 등 조합 중 (이때 문서를 바꾸면 조합 글자가 깨짐) */
+    composing: () => view.composing,
   };
 }
 

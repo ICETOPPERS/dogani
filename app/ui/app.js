@@ -86,11 +86,10 @@
     clearInterval(state.watchTimer);
     if (state.es) state.es.close();
     state.es = null;
-    state.status = "";
-    setStatus("offline");
     const sp = state.space;
     state.base = sp && sp.server ? "http://" + sp.server + sp.prefix : "";
-    rebuildSched();   // setStatus 가 같은 상태면 건너뛰므로 여기서 (스페이스가 바뀜)
+    state.status = "";
+    setStatus("offline");   // 상태를 비웠으므로 항상 실행 (일정 다시 그리기 포함, 새 base 기준)
     if (!state.base) return;
 
     const es = new EventSource(state.base + "/events");
@@ -98,7 +97,7 @@
       setStatus("online");
       refresh();
       loadSchedule();
-      api("/info").then((info) => setWritable(!!info.writable)).catch(() => {});
+      api("/info").then((info) => { setWritable(!!info.writable); note.flushOthers(); }).catch(() => {});
       note.retryPending();   // 끊긴 동안 저장 못 한 내용
     });
     es.addEventListener("schedule", () => loadSchedule());
@@ -301,7 +300,8 @@
   };
   const pendGet = (k) => pendMem[k] || null;
   function pendSet(k, v) {
-    if (v) pendMem[k] = v; else delete pendMem[k];   // 지우기는 항상 알림 (다른 창·이전 실행이 남긴 것도. 없으면 파이썬이 그냥 넘어감)
+    if (!v && !(k in pendMem)) return;   // 없는 것 지우기는 알리지 않음 (자동 저장마다 파일을 읽지 않게. 보관·저장은 할일 창만 함)
+    if (v) pendMem[k] = v; else delete pendMem[k];
     if (bridge && bridge.setUnsaved) bridge.setUnsaved(k, v ? JSON.stringify(v) : "");
   }
 
@@ -429,6 +429,7 @@
     function showPending(key, pend, keepScroll) {
       p.doc = pend.from ? { exists: true, content: pend.from.content, mtime: pend.from.mtime } : { exists: false };
       p.key = key;
+      p.pk = o.pendKey(key);
       p.eol = pend.content.includes("\r\n") ? "\r\n" : "\n";
       p.lines = pend.content.split(/\r\n|\n/);
       show(p.lines.join("\n"), keepScroll);
@@ -449,7 +450,7 @@
         const pend = pendGet(pk);
         if (pend) {   // 끊김: 서버 대신 저장 못 한 내용을 보여 줌 (읽기 전용, 다시 연결되면 저장)
           showPending(key, pend, keepScroll);
-          o.footer.textContent = `${errorText(e)} 저장 못 한 내용은 보관 중 (다시 연결되면 저장)`;
+          o.footer.textContent = `${errorText(e)} 저장하지 못한 내용은 보관했다가 다시 연결되면 저장합니다.`;
           return;
         }
         p.doc = null;
@@ -463,13 +464,14 @@
       if (pend) {   // 저장 못 한 내용이 있으면 서버 것으로 덮지 않고 그걸 다시 저장 (그 사이 바뀌었으면 합침)
         if (o.loaded) o.loaded({ title: d.title });
         showPending(key, pend, keepScroll);
-        if (!state.writable) { o.footer.textContent = "저장 못 한 내용이 있지만 편집 권한이 없습니다."; return; }
-        o.footer.textContent = "저장 못 한 내용 저장 중…";
+        if (!state.writable) { o.footer.textContent = "보관한 내용이 있지만 편집 권한이 없습니다."; return; }
+        o.footer.textContent = "보관한 내용을 저장하는 중입니다.";
         p.save();
         return;
       }
       p.doc = d;
       p.key = key;
+      p.pk = pk;
       if (!d.exists) {
         p.message(o.empty(d));
         if (o.loaded) o.loaded(d);
@@ -491,7 +493,32 @@
       p.save().then(() => { if (p.missed && !p.editing) { p.missed = false; p.load(true); } });
     }
     /** 다시 연결됨: 편집 중이라 load 가 건너뛰는 경우에도 보관한 내용 저장 */
-    p.retryPending = () => { if (p.editing && p.key != null && pendGet(o.pendKey(p.key))) p.save(); };
+    p.retryPending = () => {
+      if (p.editing && p.key != null && pendGet(p.pk)) p.save();
+    };
+    /** 지금 스페이스에 보관된, 열려 있지 않은 날짜의 노트도 저장. 같은 줄 충돌이면 그대로 둠 (그 날짜를 열면 물어봄) */
+    // 할일 창만 (달력 창의 보관 목록은 시작할 때 받은 옛 사본이라 지운 줄을 되살릴 수 있음)
+    p.flushOthers = () => {
+      const sp = state.space, base = state.base;
+      if (!sp || !base || !state.writable || state.mode !== "note") return;
+      for (const pk of Object.keys(pendMem)) {
+        if (!pk.startsWith(sp.key + "|") || pk === p.pk) continue;
+        const pend = pendMem[pk], key = base + "|" + pk.slice(sp.key.length + 1);
+        chain = chain.then(async () => {
+          if (state.base !== base || pendGet(pk) !== pend || pk === p.pk) return;
+          try {
+            const cur = await o.fetch(key, base);
+            const eol = pend.content.includes("\r\n") ? "\r\n" : "\n";
+            const merged = merge3(pend.from ? pend.from.content : "", pend.content, cur.exists ? cur.content : "", eol);
+            if (merged == null) return;
+            if (!(cur.exists && cur.content === merged)) await o.post(key, merged, cur.exists ? cur.mtime : null, base);   // 이미 같으면 쓰지 않음
+            if (pendGet(pk) === pend) pendSet(pk, null);
+          } catch (e) {   // 권한이 없어졌으면 클립보드로 넘기고 지움, 그 밖엔 그대로 보관 (다음 연결이나 그 날짜를 열 때 다시)
+            if (e.code === "read_only" && pendGet(pk) === pend) { copyText(pend.content); pendSet(pk, null); }
+          }
+        });
+      }
+    };
 
     /** 편집 칸을 합친 내용으로 맞춤. 저장하는 동안 더 쓴 게 있으면(posted ≠ 지금) 그것도 합침 */
     function adopt(posted, merged) {
@@ -499,8 +526,9 @@
       const next = now === posted ? merged : merge3(posted, now, merged, p.eol);
       if (next == null) return false;
       if (next === now) return true;
+      if (p.editor.composing()) return false;   // 한글 조합 중엔 안 넣음 → 다음 저장이 충돌·합치기로 다시 반영
       p.lines = next.split(/\r\n|\n/);
-      p.editor.setDoc(p.lines.join("\n"), true);
+      p.editor.mergeDoc(p.lines.join("\n"));
       if (o.progress) setProgress(...countTasks(p.lines));
       return true;
     }
@@ -514,11 +542,14 @@
     p.save = () => {
       clearTimeout(timer);
       if (!p.lines || p.key == null) return chain;
-      const content = p.lines.join(p.eol);
-      const key = p.key, base = state.base, pk = o.pendKey(key), eol = p.eol;
+      const called = p.lines.join(p.eol);
+      // 스페이스 주소·보관 키는 노트 키에서 (스페이스를 바꾼 뒤 늦게 실행돼도 원래 스페이스에 저장)
+      const key = p.key, base = key.slice(0, key.lastIndexOf("|")), pk = p.pk || o.pendKey(key), eol = p.eol;
       const here = () => p.key === key && state.base === base;
       const snap = p.doc;   // 부른 시점의 바탕 (실행될 때 날짜를 옮겼으면 이걸 씀)
       chain = chain.then(async () => {
+        // 실행될 때의 편집 칸 내용 (앞 저장이 합친 결과가 들어갔을 수 있음). 다른 노트로 옮겼으면 부른 시점 것
+        const content = here() && p.lines ? p.lines.join(p.eol) : called;
         // 이 내용의 바탕 = 서버에서 마지막으로 받은 것 (앞 저장이 끝났으면 그 결과)
         let from = (here() ? p.doc : snap) || { exists: false };
         if (from.exists && from.content === content) { pendSet(pk, null); return true; }
@@ -532,8 +563,9 @@
               p.doc = d;
               // 저장 중에 더 쓴 내용과 합치지 못함: 바탕을 '합치기 전 내 것'으로 두고 mtime 을 틀리게 → 다음 저장이 충돌 → 물어봄
               if (mine !== content && !adopt(content, mine)) p.doc = { exists: true, content, mtime: -1 };
+              if (p.doc.mtime !== -1 && dirty()) { clearTimeout(timer); timer = setTimeout(p.save, 700); }   // 저장 중에 더 쓴 것이 남음
               if (o.loaded) o.loaded(d);
-              o.footer.textContent = mine !== content ? "저장됨 (그 사이 다른 곳에서 고친 내용과 합침)" : "저장됨";
+              o.footer.textContent = mine !== content ? "다른 곳에서 고친 내용과 합쳐 저장했습니다." : "저장했습니다.";
             }
             return true;
           } catch (err) { e = err; }
@@ -545,8 +577,8 @@
               const merged = merge3(from.exists ? from.content : "", mine, theirs, eol);
               if (merged !== null) { mine = merged; from = cur; continue; }
               // 같은 줄을 서로 다르게 고침 → 사용자에게
-              if (confirm("그 사이 다른 곳(옵시디언·다른 팀원)에서 같은 줄을 다르게 고쳤습니다.\n\n" +
-                "확인 = 내 내용으로 덮어쓰기 (상대 내용은 클립보드에 복사)\n취소 = 상대 내용 쓰기 (내 내용은 클립보드에 복사)")) {
+              if (confirm("그 사이 옵시디언이나 다른 팀원이 같은 줄을 다르게 고쳤습니다.\n\n" +
+                "확인을 누르면 내 내용으로 덮어쓰고, 상대 내용은 클립보드에 복사합니다.\n취소를 누르면 상대 내용을 쓰고, 내 내용은 클립보드에 복사합니다.")) {
                 copyText(theirs);
                 from = cur; continue;
               }
@@ -558,7 +590,7 @@
                 p.eol = theirs.includes("\r\n") ? "\r\n" : "\n";
                 if (cur.exists) { show(p.lines.join("\n"), true); if (o.loaded) o.loaded(cur); }
                 else p.load(true);
-                o.footer.textContent = "상대 내용으로 바꿈 (내 내용은 클립보드에 복사됨)";
+                o.footer.textContent = "상대 내용으로 바꿨습니다. 내 내용은 클립보드에 복사했습니다.";
               }
               return false;
             }
@@ -566,18 +598,27 @@
           if (e.code === "read_only") {   // 권한이 없어짐: 보관해도 저장할 수 없음
             copyText(mine);
             pendSet(pk, null);
-            if (here()) o.footer.textContent = errorText(e) + " (쓰던 내용은 클립보드에 복사됨)";
+            if (here()) {   // 편집 칸을 서버 것으로 (변경이 남으면 load 마다 다시 저장·복사함)
+              p.doc = null;
+              p.lines = null;
+              p.editing = p.missed = false;
+              p.load(true).then(() => { o.footer.textContent = errorText(e) + " 쓰던 내용은 클립보드에 복사했습니다."; });
+            }
             return false;
           }
           // 끊김·로그인 풀림·서버 오류: 보관 → 다시 연결되면 저장
           pendSet(pk, { content: mine, from: from.exists ? { content: from.content, mtime: from.mtime } : null, at: Date.now() });
           if (here()) o.footer.textContent = errorText(e) + " 쓴 내용은 보관했다가 다시 연결되면 저장합니다.";
           // 요청 자체가 안 감(망 끊김) = SSE 도 죽었을 수 있음 → 바로 다시 연결 (연결되면 hello 에서 다시 저장)
-          if (!e.code && state.base === base && state.status === "online") connect();
+          // POST 만 막히는 망이면 저장 → 다시 연결 → 저장이 되풀이되므로 1분에 한 번만
+          if (!e.code && state.base === base && state.status === "online" && Date.now() - (state.saveReconnectAt || 0) > 60000) {
+            state.saveReconnectAt = Date.now();
+            connect();
+          }
           return false;
         }
         pendSet(pk, { content: mine, from: from.exists ? { content: from.content, mtime: from.mtime } : null, at: Date.now() });
-        if (here()) o.footer.textContent = "계속 충돌해서 저장하지 못했습니다. 쓴 내용은 보관 중 (다시 불러오면 다시 시도)";
+        if (here()) o.footer.textContent = "계속 충돌해서 저장하지 못했습니다. 쓴 내용은 보관했다가 다시 불러올 때 저장합니다.";
         return false;
       });
       return chain;
@@ -594,6 +635,7 @@
       p.lines = [""];
       p.eol = "\n";
       p.key = o.key();
+      p.pk = o.pendKey(p.key);
       show("", false);
       p.editor.focus(0);
       return true;
@@ -1036,8 +1078,9 @@
       // 스페이스 고르기: 숨긴 것 포함 전부 (새 일정 = 지금 보는 스페이스, 수정 = 그 일정이 있는 스페이스들)
       const keys = ev ? ev.spaces || [] : [state.space && state.space.key];
       // 숨긴(체크 끈) 스페이스도 고를 수 있게 모두 띄움 (흐리게 표시)
-      $("ev-add-spaces").innerHTML = schedSpaces().map((sp) => `<label title="${sp.kind === "me" ? "개인" : "팀스페이스"}${state.calHidden.has(sp.key) ? " (달력에서 숨김)" : ""}"${state.calHidden.has(sp.key) ? ' class="sp-hidden"' : ""}>` +
-        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) || !spOnline(sp) ? " disabled" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}${spOnline(sp) ? "" : " (연결 안 됨)"}</label>`).join("");
+      // 연결 안 된 스페이스는 흐리게·못 고름 (툴팁으로 이유)
+      $("ev-add-spaces").innerHTML = schedSpaces().map((sp) => `<label title="${sp.kind === "me" ? "개인" : "팀스페이스"}${spOnline(sp) ? "" : " · 연결되지 않았습니다"}${state.calHidden.has(sp.key) ? " · 달력에서 숨겼습니다" : ""}"${state.calHidden.has(sp.key) || !spOnline(sp) ? ' class="sp-hidden"' : ""}>` +
+        `<input type="checkbox" data-key="${esc(sp.key)}"${keys.includes(sp.key) ? " checked" : ""}${state.roSpaces.has(sp.key) || !spOnline(sp) ? " disabled" : ""}><i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
       $("ev-add-del").hidden = !ev;
       $("ev-add-ok").textContent = ev ? "저장" : "추가";
       $("ev-add-err").textContent = "";
