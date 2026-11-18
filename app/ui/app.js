@@ -1208,13 +1208,20 @@
     if (bridge) bridge.setCalHidden(JSON.stringify([...state.calHidden]));
     rebuildSched();
   });
-  $("cal-members").addEventListener("mouseover", (e) => {
-    const inp = e.target.closest("label") && e.target.closest("label").querySelector("input");
-    if (!inp) return;   // 칩 사이 틈 = 하던 강조 그대로 (줄 밖으로 나가야 풀림)
-    tagHover(inp && inp.checked && inp.dataset.mem ? inp.dataset.mem : null, "members");
-  });
-  $("cal-members").addEventListener("mouseleave", () => tagHover(null));
+  // 칩 강조: 칩 사이 틈·꺼진 칩·태그 없는 칩 = 하던 강조 그대로 (줄 밖으로 나가야 풀림). 같은 칩 안 이동은 무시
+  let hoverKey = null;
+  function chipHover(box, attr, field) {
+    box.addEventListener("mouseover", (e) => {
+      const lab = e.target.closest("label"), inp = lab && lab.querySelector("input");
+      if (inp && inp.checked && inp.dataset[attr]) tagHover(inp.dataset[attr], field);
+    });
+    box.addEventListener("mouseleave", () => tagHover(null));
+  }
+  chipHover($("cal-members"), "mem", "members");
   function tagHover(tag, field = "tags") {
+    const key = tag ? field + ":" + tag : null;
+    if (key === hoverKey) return;
+    hoverKey = key;
     const grid = $("cal-grid");
     grid.classList.toggle("sp-hover", !!tag);
     if (tag) grid.style.setProperty("--spc", field === "tags" ? tagColor(tag) : "var(--accent)");
@@ -1223,12 +1230,7 @@
       el.classList.toggle("sp-on", !!(tag && ev && (ev[field] || []).includes(tag)));
     }
   }
-  $("cal-tags").addEventListener("mouseover", (e) => {
-    const inp = e.target.closest("label") && e.target.closest("label").querySelector("input");
-    if (!inp) return;   // 칩 사이 틈 = 하던 강조 그대로 (줄 밖으로 나가야 풀림)
-    tagHover(inp && inp.checked && inp.dataset.tag ? inp.dataset.tag : null);
-  });
-  $("cal-tags").addEventListener("mouseleave", () => tagHover(null));
+  chipHover($("cal-tags"), "tag", "tags");
   // 달력 일정에 마우스 올림 = 정보 카드 (기본 title 툴팁은 겹치니 뗌)
   const tagTip = $("ev-tagtip");
   // 일정에 마우스 = 마우스가 있는 날짜에 걸친 일정 카드를 시간 순으로 모두. 일정 밖 0.15초면 닫힘

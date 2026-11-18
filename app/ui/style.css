@@ -609,7 +609,7 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 /* 스페이스 표시: 일정 앞 색 막대 (스페이스가 둘 이상 보일 때만), 달력 위 스페이스 체크 */
 :root { --sp-me: #8b93a1; }
 .cal-filters { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 0; }
-.cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
+.cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; cursor: pointer; }
 .cal-spaces[hidden] { display: none; }
 .cal-spaces label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .cal-spaces label { padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); }
