@@ -76,7 +76,7 @@ class Indent extends WidgetType {
     s.style.width = `calc(${this.lvl} * var(--ind))`;
     for (let k = 0; k < this.lvl; k++) {
       const last = k === this.lvl - 1;
-      if (this.cont[k]) s.insertAdjacentHTML("beforeend", `<span class="cm-guide" style="--k:${k}"></span>`);
+      if (this.cont[k]) s.insertAdjacentHTML("beforeend", `<span class="cm-guide${last ? " below" : ""}" style="--k:${k}"></span>`);
       if (last) s.insertAdjacentHTML("beforeend", `<span class="cm-guide cm-elbow" style="--k:${k}"></span>`);
     }
     return s;

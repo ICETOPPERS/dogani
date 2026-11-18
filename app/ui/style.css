@@ -240,6 +240,7 @@ body.writable .task-checkbox { cursor: pointer; }
   border-left: 1px solid var(--guide);
   pointer-events: none;
 }
+.cm-guide.below { top: .8em; }   /* 꺾임 아래부터만 (반투명 선 겹침 방지) */
 /* 트리 연결선: 부모 체크 아래에서 내려와 ╰ 로 둥글게 꺾여 자기 기호로 */
 .cm-guide.cm-elbow {
   border: 0;
