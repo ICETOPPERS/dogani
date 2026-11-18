@@ -7,7 +7,8 @@
   - `node --test tests/` → 노트 합치기 `merge3` 14개 (`merge3.test.mjs`, `app.js` 에서 함수를 직접 잘라 써서 복사본 안 낡음)
   - `python tests/e2e_ui.py` → 화면 2개(offscreen)+실제 서버 17개, 약 1분 (QtWebEngine 이라 unittest 와 따로)
 - 판단: `e2e_ui.py` 는 예전 스크립트를 현재 구조(`/api/s/<id>`, `ShareServer(port, name)`+`TeamHost`)에 맞춰 옮김. 출력 줄은 `os._exit` 전에 flush 하도록 고침
-- CLAUDE.md 에 `[시험]` 지침 추가 (개인 파일, 커밋 안 함)
+- CLAUDE.md 에 `[시험]` 지침 추가, 주제별로 정리하고 `[코드 스타일·리팩토링]` 절 추가 (개인 파일, 커밋 안 함)
+- ROADMAP.md 에 개발자 가이드·문서 사이트 / 큰 파일 나누기 / 외부 달력 내보내기(.ics → Google Calendar API) 추가
 
 ## 아직 정할 것
 
@@ -41,7 +42,8 @@
 - 시험 넓히기: 일정 파서(`schedule.py`)·공휴일 판정(`calendar.js offKind`)·팀원 인증(PIN·토큰) 시험
 
 
-- [ ] 리팩토링: `TeamHost` → `Space` 이름 정리, dogani.py 스페이스 코드를 모듈로 분리
+- [ ] 큰 파일 나누기(`TeamHost` → `Space` 이름 정리 포함) → ROADMAP.md 참고
+- [ ] 개발자 가이드·문서 사이트, 외부 달력 내보내기 → ROADMAP.md 참고
 - [ ] 런처를 다시 빌드할 때 `deps.py` 에 `difflib` 추가, 받은 코드 import 실패를 `%APPDATA%\dogani\launcher.log` 에 남기기
 - [ ] 근무일·휴일 지정 → ROADMAP.md 참고
 
