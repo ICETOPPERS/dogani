@@ -82,6 +82,30 @@
     ].filter(Boolean).join("\n");
   }
 
+  /** 달력 일정 호버 카드 (네모 상자에 정보 전부). tagColor(t) → 색 */
+  function eventCard(ev, tagColor) {
+    const row = (k, v) => (v ? `<div class="tc-row"><span class="tc-k">${k}</span><span class="tc-v">${v}</span></div>` : "");
+    const t = ev.task;
+    const range = t ? (ev.start === ev.end ? ev.end : `${ev.start} ~ ${ev.end}`)
+      : ev.open === "start" ? `~ ${ev.end} (시작 미정)`
+      : ev.open === "end" ? `${ev.start} ~ (끝 미정)`
+      : ev.start === ev.end ? ev.start : `${ev.start} ~ ${ev.end}`;
+    const when = esc(range) + (ev.time ? " " + esc(timeText(ev)) : "") + (ev.uncertain ? ' <span class="tc-dim">(시각 미정)</span>' : "");
+    const badges = [t && (t.done ? "완료" : "할일"), ev.important && "중요", ev.holiday && "쉬는 날"].filter(Boolean)
+      .map((b) => `<span class="tc-badge">${b}</span>`).join("");
+    return `<div class="tc-title" style="--ev:${eventColor(ev)}">${esc(ev.title)}${badges}</div>` +
+      row("날짜", when) +
+      row("장소", ev.place && esc(ev.place)) +
+      row("스페이스", ev.spaceMarks && ev.spaceMarks.map((m) => `<span class="tc-chip"><i style="background:${m.color}"></i>${esc(m.name)}</span>`).join("")) +
+      row("태그", (ev.tags || []).map((g) => `<span class="tc-chip"><i style="background:${tagColor(g)}"></i>${esc(g)}</span>`).join("")) +
+      row("멤버", (ev.members || []).map((m) => `<span class="tc-chip">@${esc(m)}</span>`).join("")) +
+      row("메모", ev.memo && esc(ev.memo)) +
+      row("노트", t && esc(t.note)) +
+      row("작성", ev.who && ev.who.by && esc(ev.who.by)) +
+      row("수정", ev.who && ev.who.mod && esc(ev.who.mod)) +
+      (t ? '<div class="tc-foot">가장자리를 끌면 기간 조절</div>' : "");
+  }
+
   /** 팀스페이스 일정의 작성·수정 팀원 (줄 끝 꼬리표) */
   const whoText = (w) => [w.by && `작성 ${w.by}`, w.mod && `수정 ${w.mod}`].filter(Boolean).join(" · ");
 
@@ -249,7 +273,7 @@
   }
 
   window.doganiCalendar = {
-    WD, pad, iso, parseISO, addDays, addMonths, tagHue,
+    WD, pad, iso, parseISO, addDays, addMonths, tagHue, eventCard,
     index, isOff, nextWorkday, renderMonth, fitCells, dayEvents,
   };
 })();

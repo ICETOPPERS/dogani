@@ -914,7 +914,11 @@
     if (ev && e.button === 2) {
       // 일정·할일 위 오른쪽 버튼 = 새 일정 말고 바로 그 항목 편집 (할일 = 노트 열기)
       if (ev.task) { if (bridge) bridge.openNote(ev.task.note); }
-      else if (canEdit(ev)) evAdd.open("", "", e.clientX, e.clientY, ev);
+      else if (canEdit(ev)) {
+        evAdd.close();   // 열려 있던 팝업은 닫고
+        evAdd.open("", "", e.clientX, e.clientY, ev);
+        e.stopPropagation();   // 아래 document "팝업 밖 누르면 닫기" 가 방금 연 팝업을 바로 닫지 않게
+      }
       return;
     }
     const cell = e.target.closest(".cal-day");
@@ -1049,17 +1053,20 @@
     tagHover(inp && inp.checked && inp.dataset.tag ? inp.dataset.tag : null);
   });
   $("cal-tags").addEventListener("mouseleave", () => tagHover(null));
-  // 달력 일정에 마우스 올림 = 위에 태그 칩
+  // 달력 일정에 마우스 올림 = 정보 카드 (기본 title 툴팁은 겹치니 뗌)
   const tagTip = $("ev-tagtip");
+  let tipEl = null;
   $("cal-grid").addEventListener("mouseover", (e) => {
     const el = e.target.closest(".ev[data-k]"), ev = evOf(el);
-    if (!ev || !((ev.tags || []).length + (ev.members || []).length) || move) { tagTip.hidden = true; return; }
-    tagTip.innerHTML = (ev.tags || []).map((t) => `<span><i style="background:${tagColor(t)}"></i>${esc(t)}</span>`).join("") +
-      (ev.members || []).map((m) => `<span>@${esc(m)}</span>`).join("");
+    if (!ev || move || drag) { tagTip.hidden = true; tipEl = null; return; }
+    if (el === tipEl && !tagTip.hidden) return;
+    tipEl = el;
+    el.removeAttribute("title");
+    tagTip.innerHTML = CAL.eventCard(ev, tagColor);
     tagTip.hidden = false;
     const r = el.getBoundingClientRect(), w = tagTip.offsetWidth, h = tagTip.offsetHeight;
     tagTip.style.left = Math.max(4, Math.min(r.left, innerWidth - w - 4)) + "px";
-    tagTip.style.top = (r.top - h - 3 >= 0 ? r.top - h - 3 : r.bottom + 3) + "px";
+    tagTip.style.top = (r.bottom + 4 + h <= innerHeight ? r.bottom + 4 : Math.max(4, r.top - h - 4)) + "px";
   });
   $("cal-grid").addEventListener("mouseleave", () => { tagTip.hidden = true; });
   $("cal-grid").addEventListener("mousedown", () => { tagTip.hidden = true; });

@@ -576,9 +576,23 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .cal-tags label.no-tag { border-color: transparent; padding: 1px 4px; }
 .cal-tags label.no-tag:not(:has(input:checked)) { text-decoration: line-through; }
 /* 달력 일정에 마우스 올리면 위에 뜨는 태그 칩 */
-.ev-tagtip { position: fixed; z-index: 40; display: flex; gap: 3px; pointer-events: none; font-size: 10px; }
+.ev-tagtip {
+  position: fixed; z-index: 40; pointer-events: none;
+  min-width: 160px; max-width: 280px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 11px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+}
 .ev-tagtip[hidden] { display: none; }
-.ev-tagtip span, .ev-add-tagpick button { display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); }
+.ev-tagtip .tc-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-weight: 600; font-size: 12px; padding-left: 6px; border-left: 3px solid var(--ev); margin-bottom: 2px; word-break: break-all; }
+.ev-tagtip .tc-badge { font-weight: normal; font-size: 10px; padding: 0 5px; border-radius: 3px; background: color-mix(in srgb, var(--ev) 18%, transparent); color: var(--text-muted); }
+.ev-tagtip .tc-row { display: flex; gap: 8px; align-items: baseline; }
+.ev-tagtip .tc-k { flex: none; width: 44px; color: var(--text-muted); }
+.ev-tagtip .tc-v { display: flex; flex-wrap: wrap; gap: 3px; white-space: pre-wrap; word-break: break-all; }
+.ev-tagtip .tc-dim, .ev-tagtip .tc-foot { color: var(--text-muted); }
+.ev-tagtip .tc-foot { font-size: 10px; margin-top: 3px; border-top: 1px solid var(--border); padding-top: 3px; }
+.ev-tagtip .tc-chip, .ev-add-tagpick button { display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); }
 .ev-add-tagpick { display: flex; flex-wrap: wrap; gap: 3px; flex-basis: 100%; max-height: 62px; overflow-y: auto; }
 .ev-add-grid .v-tags { flex-wrap: wrap; }   /* 태그 칩은 입력칸 아래 줄 전체 너비 */
 .ev-add-grid .k-top { align-self: start; padding-top: 4px; }
