@@ -86,7 +86,8 @@
   function eventCard(ev, tagColor) {
     const row = (k, v) => (v ? `<div class="tc-row"><span class="tc-k">${k}</span><span class="tc-v">${v}</span></div>` : "");
     const t = ev.task;
-    const range = t ? (ev.start === ev.end ? ev.end : `${ev.start} ~ ${ev.end}`)
+    const range = t && t.plan ? `${ev.start} 완료 (예정 ${t.plan[0] === t.plan[1] ? t.plan[1] : t.plan.join(" ~ ")})`
+      : t ? (ev.start === ev.end ? ev.end : `${ev.start} ~ ${ev.end}`)
       : ev.open === "start" ? `~ ${ev.end} (시작 미정)`
       : ev.open === "end" ? `${ev.start} ~ (끝 미정)`
       : ev.start === ev.end ? ev.start : `${ev.start} ~ ${ev.end}`;
@@ -97,13 +98,13 @@
       row("날짜", when) +
       row("장소", ev.place && esc(ev.place)) +
       row("스페이스", ev.spaceMarks && ev.spaceMarks.map((m) => `<span class="tc-chip"><i style="background:${m.color}"></i>${esc(m.name)}</span>`).join("")) +
-      row("태그", (ev.tags || []).map((g) => `<span class="tc-chip"><i style="background:${tagColor(g)}"></i>${esc(g)}</span>`).join("")) +
+      row("태그", (ev.tags || []).map((g) => `<span class="tc-chip tag-chip" style="--tc:${tagColor(g)}">${esc(g)}</span>`).join("")) +
       row("멤버", (ev.members || []).map((m) => `<span class="tc-chip">@${esc(m)}</span>`).join("")) +
       row("메모", ev.memo && esc(ev.memo)) +
       row("노트", t && esc(t.note)) +
       row("작성", ev.who && ev.who.by && esc(ev.who.by)) +
       row("수정", ev.who && ev.who.mod && esc(ev.who.mod)) +
-      (t ? '<div class="tc-foot">가장자리를 끌면 기간 조절</div>' : "");
+      (t && !t.plan ? '<div class="tc-foot">가장자리를 끌면 기간 조절 · 우클릭 = 달력에서 빼기</div>' : "");
   }
 
   /** 팀스페이스 일정의 작성·수정 팀원 (줄 끝 꼬리표) */
@@ -236,7 +237,8 @@
       const lane = lanes[k % 7];
       const list = singles.length || lane.length ? `<div class="evs"><div class="singles">${singles.map(dayItem).join("")}</div>` +
         (lane.length ? `<div class="lanes">${lane.join("")}</div>` : "") + "</div>" : "";
-      html += `<div class="${cls.join(" ")}" data-date="${d}"><span class="num">${cursor.getDate()}</span>${list}${count}</div>`;
+      // 주 안에서 앞 칸이 위: 기간 띠가 오른쪽 칸들 위로 뻗어도 클릭이 띠로 감 (안 그러면 뒤 칸이 덮음)
+      html += `<div class="${cls.join(" ")}" data-date="${d}" style="z-index:${7 - (k % 7)}"><span class="num">${cursor.getDate()}</span>${list}${count}</div>`;
       cursor.setDate(cursor.getDate() + 1);
     }
     return { html, notes, done, total };

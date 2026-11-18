@@ -91,6 +91,7 @@ def count_tasks(text):
 
 
 TASK_DATE_RE = re.compile("\\s*(\U0001F6EB|\U0001F4C5)\uFE0F?\\s*(\\d{4}-\\d{2}-\\d{2})")   # 🛫 시작 / 📅 마감 (옵시디언 Tasks)
+TASK_DONE_RE = re.compile("\\s*\u2705\uFE0F?\\s*(\\d{4}-\\d{2}-\\d{2})")   # ✅ 완료 날짜 (옵시디언 Tasks)
 TASK_HEAD_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[.\]\s*")
 TASK_MARK_RE = re.compile(r"\*\*|==|~~|\[\[|\]\]")
 
@@ -117,8 +118,14 @@ def dated_tasks(text):
         end = dates.get("\U0001F4C5") or start
         if end < start:
             start, end = end, start
-        title = TASK_MARK_RE.sub("", TASK_DATE_RE.sub("", TASK_HEAD_RE.sub("", line))).strip()
-        out.append({"line": i, "raw": line.rstrip("\r"), "done": m[1] != " ",
+        # ✅ 완료 날짜: 체크된 줄만, 틀린 날짜는 없는 셈 (달력은 이 날에 그림)
+        done_on = TASK_DONE_RE.search(line) if m[1] != " " else None
+        try:
+            done_on = done_on and dt.date.fromisoformat(done_on[1]).isoformat()
+        except ValueError:
+            done_on = None
+        title = TASK_MARK_RE.sub("", TASK_DONE_RE.sub("", TASK_DATE_RE.sub("", TASK_HEAD_RE.sub("", line)))).strip()
+        out.append({"line": i, "raw": line.rstrip("\r"), "done": m[1] != " ", "done_on": done_on or None,
                     "title": title or "(제목 없음)", "start": start, "end": end})
     return out
 

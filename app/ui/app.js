@@ -99,6 +99,8 @@
       const dates = JSON.parse(e.data).dates || [];
       if (state.mode === "note" && dates.includes(state.noteDate)) note.reloadIfIdle();
       if (state.mode === "cal" && dates.some((d) => d.startsWith(state.calYM))) loadMonth(true);
+      // 노트가 바뀌면 날짜 붙은 할일(달력에 비친 것)도 바뀜 → 일정 다시 읽기 (개인 스페이스만 할일이 옴)
+      if (dates.length && state.space && state.space.kind === "me") loadSchedule();
     });
     es.addEventListener("reload", () => { loadSchedule(); refresh(); });
     es.onerror = () => {
@@ -186,12 +188,19 @@
     list.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
     state.schedAll = list;   // 태그로 거르기 전 (태그 필터 목록을 만들 때 씀)
     // 노트의 날짜 붙은 할일: 일정처럼 그리지만 원본은 노트 줄 (태그·멤버 체크와 상관없이 보임)
-    const tasks = [];
+    // 전날 못 한 할일을 다음 날 노트에 복사해 쓰는 경우: 같은 제목·같은 예정 날짜면 가장 최근 노트의 줄 하나만 (그 줄이 지금 상태)
+    // 완료(✅ 날짜)면 예정 날짜 대신 완료한 날 하루에 그림
+    const tasks = [], latest = new Map();
     for (const sp of shown) {
       for (const t of state.tasksBySpace[sp.key] || []) {
-        tasks.push({ start: t.start, end: t.end, title: t.title, tags: [], members: [], spaces: [sp.key],
-          task: { sp: sp.key, note: t.note, line: t.line, raw: t.raw, done: t.done } });
+        const id = sp.key + "|" + t.title + "|" + t.start + "|" + t.end, prev = latest.get(id);
+        if (!prev || t.note > prev.note || (t.note === prev.note && t.line > prev.line)) latest.set(id, { ...t, sp: sp.key });
       }
+    }
+    for (const t of latest.values()) {
+      const on = t.done && t.done_on;
+      tasks.push({ start: on || t.start, end: on || t.end, title: t.title, tags: [], members: [], spaces: [t.sp],
+        task: { sp: t.sp, note: t.note, line: t.line, raw: t.raw, done: t.done, plan: on ? [t.start, t.end] : null } });
     }
     state.sched = CAL.index([...list.filter((ev) => tagShown(ev) && memberShown(ev)), ...tasks]);
     if (state.mode === "cal" && state.calView === "month") renderMonth();
@@ -244,19 +253,20 @@
     }
     return out;
   }
+  const PERSON_ICON = '<svg class="person-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z"/></svg>';
   const meMark = (m) => (m === cleanName(state.myName) ? " (나)" : "");
   function renderMemberFilter() {
     const box = $("cal-members"), ms = shownTags("members");
     box.hidden = !ms.length && !state.calHidden.has(NO_MEMBER);
     box.innerHTML = ms.map((m) => `<label title="@${esc(m)} 일정 보이기"><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
-      `@${esc(m)}${meMark(m)}</label>`).join("") +
+      `${PERSON_ICON}${esc(m)}${meMark(m)}</label>`).join("") +
       `<label class="no-tag" title="멤버 없는 일정 보이기"><input type="checkbox" data-mem=""${state.calHidden.has(NO_MEMBER) ? "" : " checked"}>멤버 없는 일정</label>`;
   }
   function renderTagFilter() {
     const box = $("cal-tags"), tags = shownTags();
     box.hidden = !tags.length && !state.calHidden.has(NO_TAG);
-    box.innerHTML = tags.map((t) => `<label title="#${esc(t)} 일정 보이기"><input type="checkbox" data-tag="${esc(t)}"${state.calHidden.has("#" + t) ? "" : " checked"}>` +
-      `<i style="background:${tagColor(t)}"></i>${esc(t)}</label>`).join("") +
+    box.innerHTML = tags.map((t) => `<label class="tag-chip" style="--tc:${tagColor(t)}" title="#${esc(t)} 일정 보이기"><input type="checkbox" data-tag="${esc(t)}"${state.calHidden.has("#" + t) ? "" : " checked"}>` +
+      `${esc(t)}</label>`).join("") +
       `<label class="no-tag" title="태그 없는 일정 보이기"><input type="checkbox" data-tag=""${state.calHidden.has(NO_TAG) ? "" : " checked"}>태그 없는 일정</label>`;
   }
 
@@ -403,6 +413,9 @@
     key: () => state.base + "|" + state.noteDate,
     fetch: (key) => api(`/note?date=${key.split("|")[1]}`),
     post: (key, content, base_mtime, base) => api("/note", { date: key.split("|")[1], content, base_mtime }, base),
+    // 줄 손잡이로 달력에 끌 때: 개인 스페이스의 할일 줄이면 dogani-task 데이터 (아니면 줄 글자 그대로)
+    dragData: (i, text) => (state.space && state.space.kind === "me" && TASK_BOX_RE.test(text)
+      ? TASK_DRAG + JSON.stringify({ sp: state.space.key, note: state.noteDate, line: i, raw: text }) : null),
     empty(d) {
       if (d.no_dir) {
         return state.writable && state.space.kind === "me"
@@ -478,7 +491,7 @@
     setProgress(0, 0);
     renderSchedRow();
     reportNoteDate();
-    note.load(false);
+    return note.load(false);
   }
 
   // ------------------------------------------------------------ calendar (달력 창)
@@ -556,6 +569,7 @@
   // 편집 영역 밖(바 등)을 누르거나 창이 포커스를 잃으면 편집 끝
   document.addEventListener("mousedown", (e) => {
     if (note.editing && !e.target.closest("#note-body")) note.exit();
+    if (note.editor) note.editor.highlightLine(null);   // 달력에서 누른 할일 줄 강조: 아무 데나 누르면 풀림
   });
   window.addEventListener("blur", () => note.exit());
 
@@ -569,7 +583,7 @@
     if (ev && ev.task) {
       if (e.target.closest(".ev-check")) {
         if (canEdit(ev)) editTask(ev.task, toggleTaskLine).catch((err) => alert("체크 실패: " + (err.message || err)));
-      } else if (bridge) bridge.openNote(ev.task.note);
+      } else if (bridge) bridge.openTask(ev.task.note, ev.task.line, ev.task.raw);   // 할일 창에서 그 줄로 가서 강조
       return;
     }
     // 일정 클릭 = 수정 팝업 (읽기 전용이면 그냥 노트 열기)
@@ -622,7 +636,15 @@
   const TASK_DRAG = "dogani-task:";   // 할일 창 손잡이 → 달력 끌어 놓기 (text/plain 앞머리)
   const TASK_BOX_RE = /^(\s*(?:[-*+]|\d+[.)])\s+\[)(.)(\])/;
   const TASK_DATE_RE = /\s*(🛫|📅)️?\s*(\d{4}-\d{2}-\d{2})/gu;
-  const toggleTaskLine = (l) => l.replace(TASK_BOX_RE, (_, a, c, b) => a + (c === " " ? "x" : " ") + b);
+  const TASK_DONE_RE = /\s*✅️?\s*\d{4}-\d{2}-\d{2}/gu;
+  /** 체크 ↔ 해제. 날짜(🛫/📅) 붙은 할일이면 체크할 때 `✅ 오늘` 을 줄 끝(블록 id 앞)에, 해제하면 뺌 (편집기 toggleTaskAt 와 같은 규칙) */
+  function toggleTaskLine(l) {
+    const checking = (l.match(TASK_BOX_RE) || [])[2] === " ";
+    l = l.replace(TASK_BOX_RE, (_, a, c, b) => a + (checking ? "x" : " ") + b).replace(TASK_DONE_RE, "");
+    if (!checking || !taskDatesOf(l)) return l;
+    const m = l.trimEnd().match(/\s\^[\w-]+$/), body = l.trimEnd();
+    return (m ? body.slice(0, -m[0].length) : body) + " ✅ " + CAL.iso(new Date()) + (m ? m[0] : "");
+  }
   /** 줄의 날짜 → {s, e} (없으면 null). 서버 dated_tasks 와 같은 규칙 */
   function taskDatesOf(l) {
     const d = {};
@@ -747,7 +769,7 @@
       // 이 달에 쓴 태그: 눌러서 넣고 빼기
       const picks = shownTags();
       $("ev-add-tagpick").hidden = !picks.length;
-      $("ev-add-tagpick").innerHTML = picks.map((t) => `<button type="button" data-tag="${esc(t)}"><i style="background:${tagColor(t)}"></i>${esc(t)}</button>`).join("");
+      $("ev-add-tagpick").innerHTML = picks.map((t) => `<button type="button" class="tag-chip" style="--tc:${tagColor(t)}" data-tag="${esc(t)}">${esc(t)}</button>`).join("");
       // 멤버: 나·팀원·이 달에 쓴 이름. 만든 사람을 자동으로 넣지 않음 (만든 사람은 서버가 줄 끝 꼬리표로)
       const mp = memberPicks();
       $("ev-add-mempick").hidden = !mp.length;
@@ -908,12 +930,17 @@
         if (e.clientX - r.left < 6 && (!bar || evEl.classList.contains("head"))) mode = "start";
         else if (r.right - e.clientX < 6 && (!bar || evEl.classList.contains("tail"))) mode = "end";
       }
-      if (c) move = { ev, el: evEl, mode, from: c.dataset.date, to: c.dataset.date };
+      // 완료한 할일(✅ 날)은 완료한 날에 고정: 끌어서 옮기지 않음 (클릭·체크 해제는 됨)
+      if (c && !(ev.task && ev.task.plan)) move = { ev, el: evEl, mode, from: c.dataset.date, to: c.dataset.date };
       return;
     }
     if (ev && e.button === 2) {
       // 일정·할일 위 오른쪽 버튼 = 새 일정 말고 바로 그 항목 편집 (할일 = 노트 열기)
-      if (ev.task) { if (bridge) bridge.openNote(ev.task.note); }
+      if (ev.task) {   // 할일 우클릭 = 달력에서 빼기 (노트 줄은 그대로, 날짜·✅ 만 지움). 노트 열기는 왼쪽 클릭
+        if (canEdit(ev) && confirm(`'${ev.title}' 을(를) 달력에서 뺄까요?
+(노트의 할일 줄은 그대로, 날짜만 지움)`))
+          editTask(ev.task, (l) => l.replace(TASK_DATE_RE, "").replace(TASK_DONE_RE, "")).catch((err) => alert("빼기 실패: " + (err.message || err)));
+      }
       else if (canEdit(ev)) {
         evAdd.close();   // 열려 있던 팝업은 닫고
         evAdd.open("", "", e.clientX, e.clientY, ev);
@@ -1005,6 +1032,7 @@
   }
   $("cal-spaces").addEventListener("mouseover", (e) => {
     const inp = e.target.closest("label") && e.target.closest("label").querySelector("input");
+    if (!inp) return;   // 칩 사이 틈 = 하던 강조 그대로 (줄 밖으로 나가야 풀림)
     spaceHover(inp && inp.checked ? inp.dataset.key : null);
   });
   $("cal-spaces").addEventListener("mouseleave", () => spaceHover(null));
@@ -1036,6 +1064,7 @@
   });
   $("cal-members").addEventListener("mouseover", (e) => {
     const inp = e.target.closest("label") && e.target.closest("label").querySelector("input");
+    if (!inp) return;   // 칩 사이 틈 = 하던 강조 그대로 (줄 밖으로 나가야 풀림)
     tagHover(inp && inp.checked && inp.dataset.mem ? inp.dataset.mem : null, "members");
   });
   $("cal-members").addEventListener("mouseleave", () => tagHover(null));
@@ -1050,6 +1079,7 @@
   }
   $("cal-tags").addEventListener("mouseover", (e) => {
     const inp = e.target.closest("label") && e.target.closest("label").querySelector("input");
+    if (!inp) return;   // 칩 사이 틈 = 하던 강조 그대로 (줄 밖으로 나가야 풀림)
     tagHover(inp && inp.checked && inp.dataset.tag ? inp.dataset.tag : null);
   });
   $("cal-tags").addEventListener("mouseleave", () => tagHover(null));
@@ -1169,7 +1199,16 @@
     },
     /** 달력 창에서 고른 날짜를 할일 창에 표시 */
     showDate(date) {
-      if (state.mode === "note") showNote(date);
+      // 이미 그 날짜를 보고 있으면 다시 읽지 않음 (다시 읽으면 맨 위로 올라갔다 내려오며 깜빡임)
+      if (state.mode === "note" && !(state.noteDate === date && note.doc)) showNote(date);
+    },
+    /** 달력에서 누른 할일: 그 노트로 가서 그 줄(줄 번호가 안 맞으면 같은 글자 줄)을 가운데로 + 강조 */
+    async showTask(date, line, raw) {
+      if (state.mode !== "note") return;
+      if (!(state.noteDate === date && note.doc)) await showNote(date);
+      if (!note.editor || !note.lines || state.noteDate !== date) return;
+      const i = note.lines[line] === raw ? line : note.lines.indexOf(raw);
+      note.editor.highlightLine(i < 0 ? line : i);
     },
     /** 할일 창의 ‹ › 오늘 (step: -1 / 1 / 0) */
     step(step) {

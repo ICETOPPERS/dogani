@@ -14,6 +14,18 @@ import { defaultKeymap, history, historyKeymap, indentMore, indentLess, insertTa
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { syntaxTree, ensureSyntaxTree, indentUnit } from "@codemirror/language";
 
+// ------------------------------------------------------------ 줄 강조 (달력 할일 클릭 → 그 줄을 밝게, 다른 곳 클릭하면 풀림)
+const setHl = StateEffect.define();
+const hlField = StateField.define({
+  create: () => Decoration.none,
+  update(v, tr) {
+    v = v.map(tr.changes);
+    for (const e of tr.effects) if (e.is(setHl)) v = e.value == null ? Decoration.none : Decoration.set([Decoration.line({ class: "cm-task-hl" }).range(e.value)]);
+    return v;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 // ------------------------------------------------------------ focus (상태에 넣어야 표 위젯 StateField 도 반응)
 const setFocus = StateEffect.define();
 const focusField = StateField.define({
@@ -409,8 +421,16 @@ function toggleTaskAt(view, pos) {
   const l = view.state.doc.lineAt(pos);
   const m = l.text.match(/^((?:[ \t]{0,3}>[ \t]?)*[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[)(.)\]/);
   if (!m) return false;
-  const at = l.from + m[1].length;
-  view.dispatch({ changes: { from: at, to: at + 1, insert: m[2] === " " ? "x" : " " }, userEvent: "input.toggle" });
+  const at = l.from + m[1].length, checking = m[2] === " ";
+  const changes = [{ from: at, to: at + 1, insert: checking ? "x" : " " }];
+  // 날짜(🛫/📅) 붙은 할일: 체크 = 줄 끝(블록 id 앞)에 `✅ 오늘`, 해제 = ✅ 날짜 뺌 (옵시디언 Tasks 형식, app.js toggleTaskLine 과 같은 규칙)
+  for (const d of l.text.matchAll(/\s*✅️?\s*\d{4}-\d{2}-\d{2}/gu)) changes.push({ from: l.from + d.index, to: l.from + d.index + d[0].length, insert: "" });
+  if (checking && /(🛫|📅)️?\s*\d{4}-\d{2}-\d{2}/u.test(l.text)) {
+    const body = l.text.trimEnd(), id = body.match(/\s\^[\w-]+$/), n = new Date();
+    const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+    changes.push({ from: l.from + body.length - (id ? id[0].length : 0), insert: " ✅ " + today });
+  }
+  view.dispatch({ changes, userEvent: "input.toggle" });
   return true;
 }
 
@@ -571,7 +591,7 @@ function create(parent, opts) {
   const handle = blockHandle(call);
 
   const extensions = (text, r) => [
-    focusField, focusSync,
+    focusField, focusSync, hlField,
     history(),
     drawSelection(),
     EditorView.lineWrapping,
@@ -634,6 +654,13 @@ function create(parent, opts) {
       view.focus();
     },
     blur() { view.contentDOM.blur(); },
+    /** n번째 줄(0부터)을 강조하고 가운데로 스크롤. null = 강조 풀기 */
+    highlightLine(n) {
+      if (n == null) { if (view.state.field(hlField).size) view.dispatch({ effects: setHl.of(null) }); return; }
+      if (n < 0 || n >= view.state.doc.lines) return;
+      const at = view.state.doc.line(n + 1).from;
+      view.dispatch({ effects: [setHl.of(at), EditorView.scrollIntoView(at, { y: "center" })] });
+    },
     hasFocus: () => view.hasFocus,
   };
 }

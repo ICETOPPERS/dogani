@@ -1,4 +1,6 @@
 /* ------------------------------------------------------------ theme */
+/* 색 칩·일정 블록 공용, 테마 무관 (DESIGN.md) */
+:root { --tint-bg: 18%; --tint-fg: 80%; --tint-radius: 4px; }
 .theme-light {
   --bg: rgba(255, 255, 255, 0.90);
   --bg-hover: rgba(0, 0, 0, 0.06);
@@ -447,8 +449,8 @@ body.writable .cm-table-widget { cursor: text; }
   line-height: 15px;
   padding: 0 4px;
   border-radius: 4px;
-  color: color-mix(in srgb, var(--ev) 80%, var(--text));
-  --bg: color-mix(in srgb, var(--ev) 18%, transparent);
+  color: color-mix(in srgb, var(--ev) var(--tint-fg), var(--text));
+  --bg: color-mix(in srgb, var(--ev) var(--tint-bg), transparent);
   background: var(--bg);
 }
 .ev.important { font-weight: 700; }
@@ -565,7 +567,7 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 
 /* 스페이스 표시: 일정 앞 색 막대 (스페이스가 둘 이상 보일 때만), 달력 위 스페이스 체크 */
 :root { --sp-me: #8b93a1; }
-.cal-filters { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 4px 8px 0; }
+.cal-filters { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 0; }
 .cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
 .cal-spaces[hidden] { display: none; }
 .cal-spaces label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
@@ -654,15 +656,17 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .cal-day.range-sel { background: color-mix(in srgb, var(--accent) 18%, transparent); user-select: none; }
 .cal-grid { user-select: none; }
 
-/* 할일(노트의 날짜 붙은 체크박스)을 달력에 비춰 보임: 점선 테두리 + 체크 네모, 완료 = 취소선 */
-.ev.task { --bg: transparent; outline: 1px dashed color-mix(in srgb, var(--ev) 60%, transparent); outline-offset: -1px; }
+/* 할일(노트의 날짜 붙은 체크박스)을 달력에 비춰 보임: 바탕·테두리 없이 체크 네모 + 글자, 완료 = 취소선 */
+.ev.task { --bg: transparent; }
 .ev.task.done { opacity: .5; text-decoration: line-through; }
 .ev-check {
-  display: inline-block; box-sizing: border-box; width: 9px; height: 9px; margin-right: 3px; vertical-align: -1px;
+  display: inline-block; box-sizing: border-box; width: 9px; height: 9px; margin-right: 5px; vertical-align: -1px;
   border: 1px solid currentColor; border-radius: 2px;
 }
 .ev-check.on { background: currentColor; }
 body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
+/* 달력에서 누른 할일 줄: 밝은 강조 (아무 데나 누르면 풀림) */
+.cm-line.cm-task-hl { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 4px; }
 /* 줄(블록) 손잡이·강조·놓을 자리 (editor.js blockHandle, .cm-scroller 안 절대 위치) */
 .cm-block-hl { position: absolute; right: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 5%, transparent); pointer-events: none; }
 .cm-block-handle {
@@ -676,3 +680,14 @@ body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
 .cm-block-hl[hidden], .cm-block-handle[hidden], .cm-drop-mark[hidden] { display: none; }
 
 #ev-add-spaces label.sp-hidden { opacity: .55; }
+
+/* 색 칩 = 일정 블록과 같은 공식 (DESIGN.md 「색 칩」). --tc 하나만 주면 됨 */
+.tag-chip {
+  border: 1px solid color-mix(in srgb, var(--tc) 45%, transparent) !important; border-radius: 999px !important;
+  background: color-mix(in srgb, var(--tc) var(--tint-bg), transparent) !important;
+  color: color-mix(in srgb, var(--tc) var(--tint-fg), var(--text)) !important;
+}
+.cal-tags label.tag-chip { padding: 2px 8px; }
+.cal-tags label.tag-chip:not(:has(input:checked)) { opacity: .35; }
+.ev-add-tagpick button.tag-chip.on { box-shadow: inset 0 0 0 1px var(--tc); font-weight: 600; }
+.person-ic { width: 10px; height: 10px; fill: currentColor; flex: none; }

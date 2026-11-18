@@ -575,6 +575,10 @@ class Bridge(QObject):
     def openNote(self, date):
         self.win.app.open_note(date)
 
+    @Slot(str, int, str)
+    def openTask(self, date, line, raw):
+        self.win.app.open_task(date, line, raw)
+
     @Slot(str, str, bool)
     def noteDateChanged(self, date, title, is_today):
         self.win.app.note_date_changed(date, title, is_today)
@@ -894,8 +898,15 @@ def overlaps(a, b):
 
 def screen_key(screen):
     """모니터 식별자: 연결 순서에 따라 바뀌는 DISPLAYn 대신 제조사·모델·일련번호 우선."""
-    key = " ".join(p for p in (screen.manufacturer(), screen.model(), screen.serialNumber()) if p).strip()
-    return key or screen.name()
+    def base(s):
+        return " ".join(p for p in (s.manufacturer(), s.model(), s.serialNumber()) if p).strip()
+    key = base(screen)
+    if not key:
+        return screen.name()
+    # 같은 모델 모니터 여러 대(일련번호 없음)면 키가 겹치므로 DISPLAYn 을 붙여 구분
+    if sum(1 for s in QGuiApplication.screens() if base(s) == key) > 1:
+        key = f"{key} {screen.name()}"
+    return key
 
 
 class doganiApp(QObject):
@@ -1364,6 +1375,15 @@ class doganiApp(QObject):
         else:
             self.win_cfg("note")["date"] = date
             self.show_panel("note")
+
+    def open_task(self, date, line, raw):
+        """달력에서 할일 클릭 → 할일 창에서 그 노트의 그 줄을 강조 (창이 닫혀 있으면 그 날짜로 열기만)"""
+        win = self.panels.get("note")
+        if not win:
+            return self.open_note(date)
+        win.show()
+        win.raise_()
+        win.call("showTask", date, line, raw)
 
     def note_date_changed(self, date, title, is_today):
         cal = self.panels.get("cal")
