@@ -335,15 +335,17 @@ class NoteStore:
                 "mtime": st.st_mtime_ns // 1_000_000, "content": read_text(path)}
 
     def write_sched_doc(self, content, base_mtime=None, new_only=False, stamp=None):
-        path = self.sched_doc_path()
-        if not path:
-            raise OSError("todo 경로가 지정되지 않았습니다")
         with self.write_lock:
-            if os.path.exists(path) and (new_only or (base_mtime is not None and os.stat(path).st_mtime_ns // 1_000_000 != base_mtime)):
+            # 경로도 잠금 안에서 한 번만 정함 (그 사이 올해 일정 파일이 생겨도 검사·꼬리표·쓰기가 같은 파일)
+            path = self.sched_doc_path()
+            if not path:
+                raise OSError("todo 경로가 지정되지 않았습니다")
+            exists = os.path.exists(path)
+            if exists and (new_only or (base_mtime is not None and os.stat(path).st_mtime_ns // 1_000_000 != base_mtime)):
                 return None
             if stamp:
                 try:
-                    content = stamp(self.sched_doc().get("content", ""), content)
+                    content = stamp(read_text(path) if exists else "", content)
                 except OSError:
                     pass   # 이전 내용을 못 읽으면 꼬리표만 건너뜀 (저장은 진행)
             atomic_write(path, content)
