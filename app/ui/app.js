@@ -218,7 +218,7 @@
     const box = $("cal-spaces");
     const list = schedSpaces();
     box.hidden = !list.length;
-    box.innerHTML = list.map((sp) => `<label title="${esc(sp.kind === "me" ? "개인" : "팀스페이스")} 일정 보이기"><input type="checkbox" data-key="${esc(sp.key)}"${state.calHidden.has(sp.key) ? "" : " checked"}>` +
+    box.innerHTML = list.map((sp) => `<label><input type="checkbox" data-key="${esc(sp.key)}"${state.calHidden.has(sp.key) ? "" : " checked"}>` +
       `<i style="background:${spaceColor(sp)}"></i>${esc(sp.name)}</label>`).join("");
   }
 
@@ -264,16 +264,16 @@
   function renderMemberFilter() {
     const box = $("cal-members"), ms = shownTags("members");
     box.hidden = !ms.length && !state.calHidden.has(NO_MEMBER);
-    box.innerHTML = ms.map((m) => `<label title="@${esc(m)} 일정 보이기"><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
+    box.innerHTML = ms.map((m) => `<label><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
       `${PERSON_ICON}${esc(m)}${meMark(m)}</label>`).join("") +
-      `<label class="no-tag" title="멤버 없는 일정 보이기"><input type="checkbox" data-mem=""${state.calHidden.has(NO_MEMBER) ? "" : " checked"}>멤버 없는 일정</label>`;
+      `<label class="no-tag"><input type="checkbox" data-mem=""${state.calHidden.has(NO_MEMBER) ? "" : " checked"}>멤버 없는 일정</label>`;
   }
   function renderTagFilter() {
     const box = $("cal-tags"), tags = shownTags();
     box.hidden = !tags.length && !state.calHidden.has(NO_TAG);
-    box.innerHTML = tags.map((t) => `<label class="tag-chip" style="--tc:${tagColor(t)}" title="#${esc(t)} 일정 보이기"><input type="checkbox" data-tag="${esc(t)}"${state.calHidden.has("#" + t) ? "" : " checked"}>` +
+    box.innerHTML = tags.map((t) => `<label class="tag-chip" style="--tc:${tagColor(t)}"><input type="checkbox" data-tag="${esc(t)}"${state.calHidden.has("#" + t) ? "" : " checked"}>` +
       `${esc(t)}</label>`).join("") +
-      `<label class="no-tag" title="태그 없는 일정 보이기"><input type="checkbox" data-tag=""${state.calHidden.has(NO_TAG) ? "" : " checked"}>태그 없는 일정</label>`;
+      `<label class="no-tag"><input type="checkbox" data-tag=""${state.calHidden.has(NO_TAG) ? "" : " checked"}>태그 없는 일정</label>`;
   }
 
   // ------------------------------------------------------------ 문서 편집 칸 (할일 노트 / 일정 파일 같이 씀)
