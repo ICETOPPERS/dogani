@@ -1003,7 +1003,8 @@
   const grid = $("cal-grid");
   grid.addEventListener("dragover", (e) => {
     const c = e.target.closest(".cal-day");
-    if (!c || !e.dataTransfer.types.includes("text/plain")) return;
+    // 할일 줄만 받음 (가로선·일반 글자 등은 칸 강조도 안 함 = 놓을 수 없다는 표시)
+    if (!c || !e.dataTransfer.types.includes("application/x-dogani-task")) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     markRange([c.dataset.date, c.dataset.date]);

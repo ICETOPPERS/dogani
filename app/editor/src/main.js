@@ -548,7 +548,9 @@ function blockHandle(call) {
       call("onDragStart");
       const text = doc.sliceString(doc.line(a).from, doc.line(b).to);
       e.dataTransfer.effectAllowed = "copyMove";
-      e.dataTransfer.setData("text/plain", call("dragData", a - 1, doc.line(a).text) || text);
+      const data = call("dragData", a - 1, doc.line(a).text);
+      e.dataTransfer.setData("text/plain", data || text);
+      if (data) e.dataTransfer.setData("application/x-dogani-task", "1");  // 달력이 끄는 중에 할일인지 알 수 있게 (내용은 drop 때만 읽힘)
       const dom = v.domAtPos(doc.line(a).from + 1).node;
       const lineEl = dom && (dom.nodeType === 1 ? dom : dom.parentElement).closest(".cm-line");
       if (lineEl) e.dataTransfer.setDragImage(lineEl, 0, 8);
