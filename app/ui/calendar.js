@@ -180,10 +180,10 @@
   const FLAG = '<svg class="ev-flag" viewBox="0 0 12 12"><path d="M2.5 1v10.5M2.5 1.5h7l-1.8 2.75L9.5 7h-7"/></svg>';
   const flag = (ev) => (ev.important ? FLAG : "");
 
-  /** 달력 칸 하루짜리 일정: 쉬는 날 아니고 시간 있으면 "[15:00] 제목"(시간만 종일 일정과 같은 네모), 아니면 칸 너비 칩 */
+  /** 달력 칸 하루짜리 일정: 쉬는 날·중요 아니고 시간 있으면 "[15:00] 제목"(시간만 종일 일정과 같은 네모), 아니면 칸 너비 칩 (중요는 시간이 있어도 칠함) */
   function dayItem(ev) {
     const time = ev.time ? `<span class="ev-time">${esc(shortTime(ev))}</span>` : "";
-    if (ev.time && !ev.holiday) {
+    if (ev.time && !ev.holiday && !ev.important) {
       const cls = ["ev", "ev-timed"];
       if (ev.important) cls.push("important");
       if (ev.uncertain) cls.push("unsure");  // 시간 네모 테두리만 + 옅은 글씨

@@ -635,6 +635,15 @@ class Bridge(QObject):
         if cal:
             cal.call("setCalDrag", bool(on))
 
+    @Slot(str, str)
+    def inviteFor(self, name, keys_json):
+        """달력 멤버 칩 우클릭: 스페이스에 아직 없는 이름 → 내 PC 스페이스 초대장 (keys = 그 이름 일정이 있는 스페이스 먼저)"""
+        try:
+            keys = [k for k in json.loads(keys_json) if isinstance(k, str)]
+        except ValueError:
+            return
+        QTimer.singleShot(0, lambda: self.win.app.invite_for(name, keys))
+
     @Slot(int, result=str)
     def getHolidays(self, year):
         """공휴일 {days, pending} — pending 이면 JS 가 조금 뒤 다시 물음"""
@@ -1557,6 +1566,25 @@ class doganiApp(QObject):
             QTimer.singleShot(500, self.create_space)
 
     # ------------------------------------------------------------ actions
+    def invite_for(self, name, keys):
+        """name 님용 새 초대장: 내 PC 스페이스 중 고름 (keys 에 든 것 먼저). 하나뿐이면 묻지 않음"""
+        hosts = [(s["key"], s["name"]) for s in self.spaces() if s["kind"] == "me" and self.local_host(s["key"])]
+        hosts.sort(key=lambda h: h[0] not in keys)
+        if not hosts:
+            return self.tray.notify("초대장을 만들 수 있는 내 PC 스페이스가 없습니다.")
+        if len(hosts) == 1:
+            if QMessageBox.question(None, APP_NAME, f"{name} 님을 '{hosts[0][1]}' 스페이스에 초대할까요?\n"
+                                    "초대장을 만들어 복사합니다.") != QMessageBox.StandardButton.Yes:
+                return
+            sid = hosts[0][0]
+        else:
+            label, ok = QInputDialog.getItem(None, APP_NAME, f"{name} 님을 초대할 스페이스를 골라 주세요.",
+                                             [h[1] for h in hosts], 0, False)
+            if not ok:
+                return
+            sid = next(h[0] for h in hosts if h[1] == label)
+        self.space_command("new_invite", self.local_host(sid), [])
+
     def space_command(self, name, host, rest):
         """내 PC 스페이스의 초대장·팀원 명령 (트레이)"""
         if name in ("new_invite", "reinvite", "copy_invite"):

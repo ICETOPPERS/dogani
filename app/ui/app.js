@@ -1555,6 +1555,14 @@
     });
   }
   chipHover($("cal-members"), "mem", "members");
+  // 멤버 칩 우클릭: 스페이스에 아직 없는 이름(일정에만 적힘) → 내 PC 스페이스 초대장 만들기 (트레이 프로그램이 스페이스를 묻고 복사)
+  $("cal-members").addEventListener("contextmenu", (e) => {
+    const lab = e.target.closest("label"), inp = lab && lab.querySelector("input[data-mem]");
+    const m = inp && inp.dataset.mem;
+    if (!m || lab.classList.contains("mem-real") || !bridge || !bridge.inviteFor) return;
+    const keys = schedSpaces().filter((sp) => (state.evBySpace[sp.key] || []).some((ev) => (ev.members || []).includes(m))).map((sp) => sp.key);
+    bridge.inviteFor(m, JSON.stringify(keys));
+  });
   function tagHover(tag, field = "tags") {
     const key = tag != null ? field + ":" + tag : null;
     if (key === hoverKey) return;
@@ -1570,6 +1578,34 @@
     }
   }
   chipHover($("cal-tags"), "tag", "tags");
+  // 태그 칩 우클릭 = 이름 일괄 변경: 쓸 수 있는 모든 스페이스 일정 파일의 "#옛이름" 을 "#새이름" 으로 (이미 있는 태그면 합쳐짐)
+  const reEsc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  $("cal-tags").addEventListener("contextmenu", async (e) => {
+    const inp = e.target.closest("label") && e.target.closest("label").querySelector("input[data-tag]");
+    const old = inp && inp.dataset.tag;
+    if (!old) return;
+    const raw = prompt(`'#${old}' 태그의 새 이름을 입력해 주세요.\n모든 스페이스 일정에서 함께 바뀝니다.`, old);
+    const name = raw == null ? "" : raw.replace(/[#,，\s]/g, "");
+    if (!name || name === old) return;
+    // 그 태그 일정이 있는 스페이스만 (안 바뀌는 파일은 저장하지 않음)
+    const has = (sp) => (state.evBySpace[sp.key] || []).some((ev) => (ev.tags || []).includes(old));
+    const all = schedSpaces().filter(has), sps = all.filter((sp) => !state.roSpaces.has(sp.key) && spOnline(sp));
+    const re = new RegExp(`(^|[\\s,，])#${reEsc(old)}(?=[\\s,，]|$)`, "gm");
+    const errs = [];
+    await undo.group(async () => {
+      for (const sp of sps) {
+        try { await editSchedDoc(sp, (t) => t.replace(re, `$1#${name}`)); }
+        catch (err) { errs.push(`${sp.name}: ${err.message || err}`); }
+      }
+    });
+    if (state.calHidden.delete("#" + old)) {
+      state.calHidden.add("#" + name);
+      if (bridge) bridge.setCalHidden(JSON.stringify([...state.calHidden]));
+    }
+    rebuildSched();
+    for (const sp of all) if (!sps.includes(sp)) errs.push(`${sp.name}: 연결되지 않았거나 읽기 전용입니다`);
+    if (errs.length) alert("태그 이름을 바꾸지 못한 스페이스가 있습니다.\n" + errs.join("\n"));
+  });
   // 달력 일정에 마우스 올림 = 정보 카드 (기본 title 툴팁은 겹치니 뗌)
   const tagTip = $("ev-tagtip");
   // 일정에 마우스 = 마우스가 있는 날짜에 걸친 일정 카드를 시간 순으로 모두. 일정 밖 0.15초면 닫힘

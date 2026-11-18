@@ -533,9 +533,10 @@ body.writable .cm-table-widget { cursor: text; }
   padding: 0;
   font-style: italic;
 }
-.ev.arrow { --lw: 1.5px; --ah: 4px; --ahl: 6px; }
-.ev.arrow.important { --lw: 2.5px; --ah: 5px; --ahl: 8px; }  /* 굵게 = 화살표도 굵게 */
-.ev.arrow .ln { flex: 1 1 0; min-width: 4px; height: var(--lw); background: var(--ev); }
+.ev.arrow { --lw: 2px; --ah: 4px; --ahl: 6px; }
+.ev.arrow.important { --lw: 3px; --ah: 5px; --ahl: 8px; }  /* 굵게 = 화살표도 굵게 */
+/* 선은 border 로: 높이(height)는 놓인 위치·배율에 따라 1~2 화면 픽셀씩 들쭉날쭉하지만 border 두께는 화면 픽셀에 맞춰 고정됨 */
+.ev.arrow .ln { flex: 1 1 0; min-width: 4px; height: 0; border-top: var(--lw) solid var(--ev); }
 .ev.arrow .ah { flex: none; width: 0; height: 0; border: var(--ah) solid transparent; }
 .ev.arrow .ah.l { border-right: var(--ahl) solid var(--ev); border-left: 0; margin-right: -3px; }
 .ev.arrow .ah.r { border-left: var(--ahl) solid var(--ev); border-right: 0; margin-left: -3px; }
@@ -547,8 +548,8 @@ body.writable .cm-table-widget { cursor: text; }
   background: linear-gradient(270deg, transparent 0, var(--bg) calc(100% / var(--n) * .6));
 }
 .cal-day .ev.bar.fade-in:not(.arrow) .bar-label { padding-left: calc(100% / var(--n) * .35); }
-.ev.arrow.fade-in .ln:first-child { background: linear-gradient(90deg, transparent, var(--ev)); }
-.ev.arrow.fade-out .ln:last-child { background: linear-gradient(270deg, transparent, var(--ev)); }
+.ev.arrow.fade-in .ln:first-child { border-image: linear-gradient(90deg, transparent, var(--ev)) 1; }
+.ev.arrow.fade-out .ln:last-child { border-image: linear-gradient(270deg, transparent, var(--ev)) 1; }
 .ev.arrow .bar-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-right: 2px; }  /* 기울어진 마지막 글자 안 잘리게 */
 .ev.arrow .bar-label::before { content: none !important; }
 /* 일정 마우스오버 = 클릭(수정)·드래그(옮기기) 가능 표시 */
