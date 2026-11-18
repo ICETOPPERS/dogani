@@ -11,6 +11,7 @@ import ctypes
 import json
 import os
 import secrets
+import shutil
 import socket
 import sys
 import threading
@@ -414,6 +415,7 @@ class Tray(QObject):
                 Item("팀원", pystray.Menu(lambda: self.member_items())),
                 Item("팀 이름 바꾸기...", self.emit("rename_team")),
                 Item(f"팀스페이스 폴더 열기 ({team.root})", self.emit("open_team_dir")),
+                Item("팀스페이스 폴더 바꾸기... (팀원 그대로)", self.emit("start_host")),
                 pystray.Menu.SEPARATOR,
                 Item("팀 호스트 끄기", self.emit("stop_host")),
             )
@@ -1150,17 +1152,39 @@ class doganiApp(QObject):
                 continue
             return path
 
+    def carry_team_meta(self, old, new):
+        """팀스페이스 폴더를 바꿀 때 예전 폴더의 .dogani(스페이스 id·팀원 목록)를 새 폴더로 옮김
+        → 같은 id = 같은 서명 키 = 팀원 토큰 그대로. 노트 파일은 옮기지 않음. 진행하면 True"""
+        if not old or os.path.normcase(os.path.abspath(old)) == os.path.normcase(os.path.abspath(new)):
+            return True
+        src, dst = space.meta_dir(old), space.meta_dir(new)
+        if not os.path.isdir(src):
+            return True
+        if os.path.exists(dst):
+            return QMessageBox.question(
+                None, APP_NAME, f"새 폴더에 이미 다른 스페이스 정보(.dogani)가 있습니다.\n{new}\n\n"
+                "이대로 열면 그 폴더의 팀(또는 새 팀)이 되어, 지금 팀원은 모두 초대장으로 다시 참여해야 합니다.\n"
+                "계속할까요?") == QMessageBox.StandardButton.Yes
+        try:
+            shutil.move(src, dst)
+        except OSError as e:
+            QMessageBox.warning(None, APP_NAME, f"팀 정보(.dogani)를 새 폴더로 옮기지 못했습니다.\n{e}")
+            return False
+        return True
+
     def start_host(self, quiet=False):
         if not self.share:
             return
         root = self.cfg["team_space_dir"]
         if not quiet:
-            if self.in_team() and QMessageBox.question(
+            hosting = bool(self.share.team)
+            if self.in_team() and not hosting and QMessageBox.question(
                     None, APP_NAME, "지금 들어가 있는 팀에서 로그아웃하고 이 PC 를 새 팀의 호스트로 만들까요?"
             ) != QMessageBox.StandardButton.Yes:
                 return
+            old = root
             root = self.pick_team_space_dir()
-            if not root:
+            if not root or not self.carry_team_meta(old, root):
                 return
         if self.cfg["space_dir"] and overlaps(root, self.cfg["space_dir"]):
             QMessageBox.warning(None, APP_NAME, "개인 스페이스와 겹치는 폴더는 팀스페이스로 열 수 없습니다.\n"
@@ -1179,7 +1203,10 @@ class doganiApp(QObject):
         except OSError as e:
             QMessageBox.warning(None, APP_NAME, f"팀스페이스를 열 수 없습니다.\n{e}")
             return
+        prev = self.share.team
         self.share.team = host
+        if prev:   # 폴더 바꾸기: 예전 폴더를 보던 팀원 창이 새 폴더로 다시 읽게
+            prev.hub.broadcast("reload", {})
         self.cfg["team_host"] = True
         self.cfg["team_space_dir"] = root
         owner = next(m for m in host.members() if m["id"] == host.owner_id)
