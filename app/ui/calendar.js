@@ -189,10 +189,11 @@
       while (e > s && week[e] > ev.end) e--;
       return { ev, s, e };
     });
-    // 같은 태그(첫 태그 = 색)끼리 붙임: 태그 묶음 순서 = 묶음 안 가장 짧은 띠 길이, 묶음 안은 짧은 순. 태그 없는 건 각자 따로
-    const len = (g) => g.e - g.s, grp = (g) => (g.ev.tags && g.ev.tags[0]) || null, gMin = {};
-    for (const g of segs) { const t = grp(g); if (t !== null) gMin[t] = Math.min(gMin[t] ?? 99, len(g)); }
-    const rank = (g) => (grp(g) === null ? len(g) : gMin[grp(g)]);
+    // 주마다 따로: 그 주에서 제일 긴 띠가 바닥, 같은 태그(첫 태그 = 색)의 짧은 띠는 그 바로 위에 붙임.
+    // 태그 묶음 순서 = 묶음 안 가장 긴 띠 길이, 묶음 안은 짧은 순. 태그 없는 건 각자 따로
+    const len = (g) => g.e - g.s, grp = (g) => (g.ev.tags && g.ev.tags[0]) || null, gMax = {};
+    for (const g of segs) { const t = grp(g); if (t !== null) gMax[t] = Math.max(gMax[t] ?? -1, len(g)); }
+    const rank = (g) => (grp(g) === null ? len(g) : gMax[grp(g)]);
     segs.sort((a, b) => rank(a) - rank(b) || (grp(a) ?? "").localeCompare(grp(b) ?? "") ||
       len(a) - len(b) || a.s - b.s || (a.ev.start < b.ev.start ? -1 : 1));
     const used = [];  // used[lane][칸] = true
