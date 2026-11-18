@@ -142,6 +142,7 @@ class NoteStore:
         self.blank = set()       # 내용이 빈 노트 날짜 (어제 노트 복사 대상에서 뺌)
         self.sched_files = {}    # path -> (mtime_ns, size)
         self.events = []         # 일정 파일에서 읽은 일정
+        self.decos = []          # 일정 파일의 장식 줄 (일정과 따로: 예전 버전 클라이언트가 빈 일정으로 그리지 않게)
         self.sched_changed = False
         self.pending = set()     # 아직 알리지 않은 바뀐 날짜 (publish 가 가져감)
 
@@ -154,6 +155,7 @@ class NoteStore:
             self.blank = set()
             self.sched_files = {}
             self.events = []
+            self.decos = []
 
     def has_root(self):
         with self.lock:
@@ -231,7 +233,8 @@ class NoteStore:
             self.pending.update(changed)
             if events is not None:
                 self.sched_files = sched
-                self.events = events
+                self.events = [e for e in events if not e.get("deco")]
+                self.decos = [e for e in events if e.get("deco")]
                 self.sched_changed = True
 
     def pop_changes(self):
@@ -244,6 +247,10 @@ class NoteStore:
     def schedule(self):
         with self.lock:
             return list(self.events)
+
+    def decorations(self):
+        with self.lock:
+            return list(self.decos)
 
     def dated_tasks(self):
         """모든 노트의 날짜 붙은 할일 (note = 노트 날짜)"""
@@ -520,6 +527,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._stream(team.hub, ctx)
         if path == "/schedule" and method == "GET":
             return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable,
+                                    "decos": team.with_authors(team.store.decorations()),
                                     "members": [m["name"] for m in team.members()]})   # @멤버 칩 후보
         self._space(method, path, qs, team.store, team.hub, writable=writable,
                     stamp=lambda old, new: schedule.stamp(old, new, mid))
@@ -555,7 +563,7 @@ class Handler(BaseHTTPRequestHandler):
             d = dt.date.fromisoformat(qs.get("date", [dt.date.today().isoformat()])[0])
             self._send_json(store.note(d))
         elif path == "/schedule":
-            res = {"events": store.schedule()}
+            res = {"events": store.schedule(), "decos": store.decorations()}
             if tasks:   # 개인 스페이스만: 날짜 붙은 할일 (팀스페이스 노트의 할일은 안 보냄)
                 res["tasks"] = store.dated_tasks()
             self._send_json(res)

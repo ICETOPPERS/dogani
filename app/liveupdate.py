@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 from PySide6.QtCore import QObject
+from PySide6.QtWebEngineCore import QWebEnginePage
 
 import devreload
 import updater
@@ -38,8 +39,9 @@ class LiveUpdate(QObject):
             self.dev.py_changed.connect(self.restart)
 
     def reload_ui(self):
+        # 그냥 reload() 는 캐시된 js 를 다시 써서 창을 껐다 켜야 반영됐음 → 캐시 무시 새로고침 (창마다)
         for ov in self.app.windows():
-            ov.view.reload()
+            ov.view.triggerPageAction(QWebEnginePage.WebAction.ReloadAndBypassCache)
 
     def restart(self):
         # run.bat 으로 실행하면 dogani 는 __main__ 이라 import dogani 하면 한 번 더 로드됨

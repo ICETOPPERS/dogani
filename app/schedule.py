@@ -13,6 +13,7 @@
   *기울임* = 기간을 화살표(←──→)로 표시
 - "10:00-10:30?" 처럼 시간 끝에 ? = 그 사이 언젠가 (정확한 시각 모름)
 - "-261119" = 시작 미정, 마감만 / "261119-" = 시작만, 끝 미정 (달력에서 페이드로 표시)
+- 장식 줄 "261119 ✦ 글자" = 일정이 아니라 그날 칸에 옅게 붙는 꾸밈 글자 (deco: True, 할일 창에서 끌어 놓아 만듦)
 - 태그는 #으로 시작하는 칸(여러 개 가능), 같은 칸의 @이름 = 멤버 ("#근태 @홍길동", "@홍길동" 만도 됨). 태그가 아닌 칸은 순서대로 장소, 메모 (장소 없이 메모만: "제목, , 메모")
 """
 import datetime as dt
@@ -27,6 +28,7 @@ _OPEN_START_RE = re.compile(r"^[-~]\s*" + _DATE + r"(?!\d)\s*(.*)$")       # -26
 _OPEN_END_RE = re.compile(r"^" + _DATE + r"\s*[-~](?=\s*$|\s+\d{1,2}:|\s*[^\d\s])\s*(.*)$")       # 261119- : 시작만, 끝 미정
 _LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\[.\]\s+)?")
 _MARK_RE = re.compile(r"\*|==")  # 굵게(**)·기울임(*)·하이라이트(==) 기호
+_DECO_RE = re.compile(_DATE + r"\s*✦\s*(.*)$")   # 장식 줄 (글자가 비어도 장식: 일정 "✦" 로 둔갑 안 함)
 _WHO_RE = re.compile(r"\s+~([0-9a-f]{8})(?:>([0-9a-f]{8}))?\s*$")  # 줄 끝 작성자 꼬리표 " ~작성id" / " ~작성id>수정id" (팀스페이스)
 
 
@@ -64,6 +66,13 @@ def parse_line(line):
     line = _LIST_RE.sub("", raw[:who.start()] if who else raw, count=1)
     if not line:  # 제목·인용 등 날짜로 시작하지 않는 줄은 아래 정규식에서 걸러짐
         return None
+    if m := _DECO_RE.match(line):
+        try:
+            d = _date(m[1]).isoformat()
+        except ValueError:
+            return None
+        return {"deco": True, "start": d, "end": d, "time": "", "text": m[2].strip(), "raw": raw,
+                "by": who[1] if who else "", "mod": (who[2] or "") if who else ""}
     fields = [f.strip() for f in re.split(r"[,，]", line)]
     head = fields[0]
     holiday = "==" in head

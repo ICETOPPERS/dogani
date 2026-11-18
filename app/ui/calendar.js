@@ -205,7 +205,7 @@
    * opts: { ym, days: {iso: {done,total}}, idx, today, selected }
    * 반환: { html, notes, done, total }
    */
-  function renderMonth({ ym, days, idx, today, selected }) {
+  function renderMonth({ ym, days, idx, today, selected, decos }) {
     const [y, m] = ym.split("-").map(Number);
     let html = WD.map((w, k) => `<div class="wd${k === 0 ? " sun" : k === 6 ? " sat" : ""}">${w}</div>`).join("");
     const first = new Date(y, m - 1, 1);
@@ -234,8 +234,11 @@
         count = `<span class="count ${c}">${info.done}/${info.total}</span>`;
       }
       // 하루 일정은 위(남는 자리만, 넘치면 +N), 기간 띠는 칸 아래 고정 영역 (숨기지 않아 옆 칸과 줄이 항상 맞음)
-      const lane = lanes[k % 7];
-      const list = singles.length || lane.length ? `<div class="evs"><div class="singles">${singles.map(dayItem).join("")}</div>` +
+      const lane = lanes[k % 7], deco = ((decos && decos[d]) || []).filter((x) => x.text);
+      // 장식: 하루 일정 맨 뒤 (자리가 모자라면 장식부터 숨김 → fitCells)
+      const decoHtml = deco.map((x) =>
+        `<span class="deco" data-sp="${esc(x.sp)}" data-raw="${esc(x.raw)}">${esc(x.text)}</span>`).join("");
+      const list = singles.length || lane.length || deco.length ? `<div class="evs"><div class="singles">${singles.map(dayItem).join("")}${decoHtml}</div>` +
         (lane.length ? `<div class="lanes">${lane.join("")}</div>` : "") + "</div>" : "";
       // 주 안에서 앞 칸이 위: 기간 띠가 오른쪽 칸들 위로 뻗어도 클릭이 띠로 감 (안 그러면 뒤 칸이 덮음)
       html += `<div class="${cls.join(" ")}" data-date="${d}" style="z-index:${7 - (k % 7)}"><span class="num">${cursor.getDate()}</span>${list}${count}</div>`;
@@ -244,26 +247,41 @@
     return { html, notes, done, total };
   }
 
-  /** 칸에 안 들어가는 하루 일정은 숨기고 "+N" 표시 (그린 뒤·크기 바뀐 뒤 호출). 기간 띠는 건드리지 않음 */
+  /**
+   * 칸에 안 들어가는 하루 일정은 숨기고 "+N" 표시 (그린 뒤·크기 바뀐 뒤 호출). 기간 띠는 건드리지 않음.
+   * 장식은 맨 뒤라 먼저 숨고, 숨은 장식은 숫자 없이 옅은 ✦ 하나 (일정 +N 과 무게를 다르게)
+   */
   function fitCells(grid) {
     for (const cell of grid.querySelectorAll(".cal-day")) {
-      cell.querySelectorAll(".ev-more").forEach((el) => el.remove());
+      cell.querySelectorAll(".ev-more, .deco-more").forEach((el) => el.remove());
       const box = cell.querySelector(".singles");
       if (!box) continue;
       const items = [...box.children];
       for (const el of items) el.hidden = false;
       if (!items.length || box.scrollHeight <= box.clientHeight + 1) continue;
-      const more = document.createElement("span");
-      more.className = "ev ev-more";
-      cell.querySelector(".num").after(more);  // +N 은 늘 날짜 숫자 오른쪽 (일정 칸 자리를 안 먹음)
-      let hidden = 0;
       for (let k = items.length - 1; k >= 0; k--) {
         if (box.scrollHeight <= box.clientHeight + 1) break;
         items[k].hidden = true;
-        hidden++;
       }
-      more.textContent = `+${hidden}`;
-      more.title = items.filter((el) => el.hidden).map((el) => el.title).join("\n\n");
+      const evs = items.filter((el) => el.hidden && !el.classList.contains("deco"));
+      const decos = items.filter((el) => el.hidden && el.classList.contains("deco"));
+      let at = cell.querySelector(".num");   // 표시는 늘 날짜 숫자 오른쪽 (일정 칸 자리를 안 먹음)
+      if (evs.length) {
+        const more = document.createElement("span");
+        more.className = "ev ev-more";
+        more.textContent = `+${evs.length}`;
+        more.title = evs.map((el) => el.title).join("\n\n");
+        at.after(more);
+        at = more;
+      }
+      if (decos.length) {
+        const mark = document.createElement("span");
+        mark.className = "deco-more";
+        mark.textContent = "✦";
+        mark.title = decos.map((el) => el.textContent).join("\n");
+        at.after(mark);
+        if (at.classList.contains("ev-more")) mark.style.left = at.offsetLeft + at.offsetWidth + 3 + "px";   // +N 배지 너비만큼
+      }
     }
   }
 

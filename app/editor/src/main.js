@@ -531,11 +531,14 @@ function blockHandle(call) {
       const cr = v.contentDOM.getBoundingClientRect(), padL = parseFloat(getComputedStyle(v.contentDOM).paddingLeft) || 0;
       const [top, left] = this.rel(first.top, cr.left + padL);
       // 첫 줄 높이: 헤더·가로줄은 글자 좌표가 숨은 기호 자리라 어긋나서 줄 요소 기준
-      const c = /^\s*(#{1,6}\s|[-*_](\s*[-*_]){2,}\s*$)/.test(ln.text) ? null : v.coordsAtPos(ln.from + ln.text.match(/^\s*/)[0].length, 1);
+      const c = /^\s*(#{1,6}\s|[-*+]\s\[.\]|[-*_](\s*[-*_]){2,}\s*$)/.test(ln.text) ? null : v.coordsAtPos(ln.from + ln.text.match(/^\s*/)[0].length, 1);
       let lh = c ? c.bottom - c.top : lineEl ? parseFloat(getComputedStyle(lineEl).lineHeight) || lineEl.getBoundingClientRect().height : v.defaultLineHeight;
+      // 한 줄짜리(줄 상자 높이 < 1.5줄)면 줄 상자 전체 높이 가운데에 (패딩 포함)
+      const boxH = lineEl ? lineEl.getBoundingClientRect().height : 0;
+      if (boxH && boxH < lh * 1.5) lh = boxH;
       lh = Math.min(lh, first.height);
       this.line = n;
-      Object.assign(this.h.style, { top: top + (lh - 22) / 2 + "px", left: Math.max(0, left - 18) + "px" });
+      Object.assign(this.h.style, { top: top + (lh - 18) / 2 + "px", left: Math.max(0, left - 18) + "px" });
       Object.assign(this.hl.style, { top: top + "px", left: Math.max(0, left - 20) + "px", height: last.bottom - first.top + "px" });
       this.h.hidden = this.hl.hidden = false;
     }
@@ -550,7 +553,7 @@ function blockHandle(call) {
       e.dataTransfer.effectAllowed = "copyMove";
       const data = call("dragData", a - 1, doc.line(a).text);
       e.dataTransfer.setData("text/plain", data || text);
-      if (data) e.dataTransfer.setData("application/x-dogani-task", "1");  // 달력이 끄는 중에 할일인지 알 수 있게 (내용은 drop 때만 읽힘)
+      if (data) e.dataTransfer.setData("application/x-dogani-cal", "1");  // 달력에 놓을 수 있는 줄(할일·장식) 표시 (내용은 drop 때만 읽힘)
       const dom = v.domAtPos(doc.line(a).from + 1).node;
       const lineEl = dom && (dom.nodeType === 1 ? dom : dom.parentElement).closest(".cm-line");
       if (lineEl) e.dataTransfer.setDragImage(lineEl, 0, 8);

@@ -36,6 +36,7 @@
     calHidden: new Set(), // 달력·할일 일정에서 숨긴 스페이스 키 (설정 cal_hidden, 창끼리 같이 씀)
     evBySpace: {},     // 스페이스 키 → /schedule 일정 목록
     tasksBySpace: {},  // 스페이스 키 → /schedule 의 날짜 붙은 할일 (개인 스페이스만 옴)
+    decoBySpace: {},   // 스페이스 키 → /schedule 의 장식 줄 (일정 파일 "261119 ✦ 글자")
     roSpaces: new Set(), // 읽기만 허용된 스페이스 키 (팀 관리자가 편집 허용을 끔. /schedule 의 writable)
     sched: null,       // 일정 색인 (CAL.index)
   };
@@ -146,6 +147,7 @@
       const res = await api("/schedule", undefined, spBase(sp));
       state.evBySpace[sp.key] = res.events || [];
       state.tasksBySpace[sp.key] = res.tasks || [];
+      state.decoBySpace[sp.key] = res.decos || [];
       if (res.members) state.teamNames = res.members;
       const ro = res.writable === false;
       if (ro !== state.roSpaces.has(sp.key)) {
@@ -202,6 +204,10 @@
       tasks.push({ start: on || t.start, end: on || t.end, title: t.title, tags: [], members: [], spaces: [t.sp],
         task: { sp: t.sp, note: t.note, line: t.line, raw: t.raw, done: t.done, plan: on ? [t.start, t.end] : null } });
     }
+    // 장식: 스페이스별로 파일 순서 그대로 (장식끼리만 순서, 일정과는 안 섞음)
+    const decos = {};
+    for (const sp of shown) for (const d of state.decoBySpace[sp.key] || []) (decos[d.start] = decos[d.start] || []).push({ ...d, sp: sp.key });
+    state.decos = decos;
     state.sched = CAL.index([...list.filter((ev) => tagShown(ev) && memberShown(ev)), ...tasks]);
     if (state.mode === "cal" && state.calView === "month") renderMonth();
     if (state.mode === "note") renderSchedRow();
@@ -300,8 +306,15 @@
           onSave: () => p.save(),
           // 줄 손잡이: 끌기 시작 = 저장, 다른 창(달력)에 놓았으면 편집 끝 (달력이 같은 노트를 고침 → 다시 읽기)
           onDragStart: () => p.save(),
-          onDragEnd: (moved) => { if (!moved) p.exit(); },
-          dragData: (i, text) => (o.dragData ? o.dragData(i, text) : null),
+          onDragEnd: (moved) => { if (bridge) bridge.setCalDrag(""); if (!moved) p.exit(); },
+          // 달력에 놓을 수 있는 줄(할일·장식)이면 달력 창에 알림 (끄는 중엔 데이터를 못 읽어서, 달력 칸 강조를 이걸로 판단)
+          // 장식 데이터는 브리지로만 보냄 (text/plain 은 줄 글자 그대로 → 다른 앱에 놓아도 글자가 들어감)
+          dragData: (i, text) => {
+            const d = o.dragData ? o.dragData(i, text) : null;
+            const cal = d || (o.calPayload ? o.calPayload(i, text) : null);
+            if (bridge) bridge.setCalDrag(cal || "");
+            return d;
+          },
           openUrl: (url) => (bridge ? bridge.openUrl(url) : window.open(url)),
         });
       } else if (p.editor.getDoc() !== text) {
@@ -416,6 +429,11 @@
     // 줄 손잡이로 달력에 끌 때: 개인 스페이스의 할일 줄이면 dogani-task 데이터 (아니면 줄 글자 그대로)
     dragData: (i, text) => (state.space && state.space.kind === "me" && TASK_BOX_RE.test(text)
       ? TASK_DRAG + JSON.stringify({ sp: state.space.key, note: state.noteDate, line: i, raw: text }) : null),
+    // 할일 아닌 글자 줄 = 달력 장식 (브리지로 달력 창에만 전달)
+    calPayload: (i, text) => {
+      const t = !TASK_BOX_RE.test(text) && state.space && state.writable && decoText(text);
+      return t ? DECO_DRAG + JSON.stringify({ sp: state.space.key, text: t }) : null;
+    },
     empty(d) {
       if (d.no_dir) {
         return state.writable && state.space.kind === "me"
@@ -519,7 +537,7 @@
 
   function renderMonth() {
     if (monthData.key !== state.base + "|" + state.calYM) return loadMonth();
-    const r = CAL.renderMonth({ ym: state.calYM, days: monthData.days, idx: state.sched, today: state.today, selected: state.noteDate });
+    const r = CAL.renderMonth({ ym: state.calYM, days: monthData.days, idx: state.sched, decos: state.decos, today: state.today, selected: state.noteDate });
     $("cal-grid").innerHTML = r.html;
     CAL.fitCells($("cal-grid"));
     renderTagFilter();
@@ -633,7 +651,16 @@
     };
   }
   // ---- 할일(노트 체크박스 줄) 날짜: 옵시디언 Tasks 형식 `🛫 시작` `📅 마감` (YYYY-MM-DD)
+  let calDrag = "";                   // 할일 창에서 달력에 놓을 수 있는 줄을 끄는 중 = 그 데이터 (파이썬이 App.setCalDrag 로 알려 줌)
   const TASK_DRAG = "dogani-task:";   // 할일 창 손잡이 → 달력 끌어 놓기 (text/plain 앞머리)
+  const DECO_DRAG = "dogani-deco:";   // 할일·가로선 아닌 줄 → 달력 장식
+  /** 노트 줄 → 장식 글자 (목록·인용·제목 기호와 굵게 등 기호 뺌). 가로선·빈 줄은 "" */
+  function decoText(line) {
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) return "";   // 가로선
+    if (/^\s*(```|~~~|\||>\s*\[!|[\w-]+:\s*$)/.test(line)) return "";   // 코드 울타리·표·콜아웃 머리·속성 키
+    return line.replace(/^\s*(?:>\s*)*(?:#{1,6}\s+)?(?:(?:[-*+]|\d+[.)])\s+)?/, "")
+      .replace(/\*\*|==|~~|`/g, "").replace(/\s+\^[\w-]+$/, "").trim().slice(0, 60);
+  }
   const TASK_BOX_RE = /^(\s*(?:[-*+]|\d+[.)])\s+\[)(.)(\])/;
   const TASK_DATE_RE = /\s*(🛫|📅)️?\s*(\d{4}-\d{2}-\d{2})/gu;
   const TASK_DONE_RE = /\s*✅️?\s*\d{4}-\d{2}-\d{2}/gu;
@@ -915,6 +942,31 @@
   }
   const dayDiff = (a, b) => Math.round((parseISO(b) - parseISO(a)) / 86400000);
   const sorted = (a, b) => (a <= b ? [a, b] : [b, a]);
+  /** 장식 우클릭 메뉴: 삭제 하나뿐 (수정 없음) */
+  function decoMenu(el, x, y) {
+    let m = $("deco-menu");
+    if (!m) {
+      m = document.createElement("button");
+      m.id = "deco-menu";
+      m.textContent = "삭제";
+      document.body.appendChild(m);
+      document.addEventListener("mousedown", (e) => { if (e.target !== m) m.hidden = true; });
+    }
+    const sp = spaceByKey(el.dataset.sp), raw = el.dataset.raw;
+    m.onclick = () => {
+      m.hidden = true;
+      if (!sp) return;
+      editSchedDoc(sp, (text) => {
+        const lines = text.split("\n"), i = lines.findIndex((l) => l.trim() === raw);
+        if (i < 0) throw new Error("일정 파일에서 이 줄을 찾지 못했습니다.");
+        lines.splice(i, 1);
+        return lines.join("\n");
+      }).catch((err) => alert("장식 삭제 실패: " + (err.message || err)));
+    };
+    m.hidden = false;
+    m.style.left = Math.min(x, innerWidth - 60) + "px";
+    m.style.top = Math.min(y, innerHeight - 30) + "px";
+  }
   $("cal-grid").addEventListener("mousedown", (e) => {
     dragged = false;
     measureCells();
@@ -932,6 +984,13 @@
       }
       // 완료한 할일(✅ 날)은 완료한 날에 고정: 끌어서 옮기지 않음 (클릭·체크 해제는 됨)
       if (c && !(ev.task && ev.task.plan)) move = { ev, el: evEl, mode, from: c.dataset.date, to: c.dataset.date };
+      return;
+    }
+    const deco = e.target.closest(".deco");
+    if (deco && e.button === 2) {   // 장식 우클릭 = 삭제 버튼만 (쓸 수 있는 스페이스일 때)
+      e.stopPropagation();
+      if (!canEdit({ spaces: [deco.dataset.sp] })) return;
+      decoMenu(deco, e.clientX, e.clientY);
       return;
     }
     if (ev && e.button === 2) {
@@ -1003,16 +1062,30 @@
   const grid = $("cal-grid");
   grid.addEventListener("dragover", (e) => {
     const c = e.target.closest(".cal-day");
-    // 할일 줄만 받음 (가로선·일반 글자 등은 칸 강조도 안 함 = 놓을 수 없다는 표시)
-    if (!c || !e.dataTransfer.types.includes("application/x-dogani-task")) return;
+    // 할일·장식 줄만 받음 (가로선·빈 줄·바깥 글자는 칸 강조도 안 함 = 놓을 수 없다는 표시)
+    if (!c || !(calDrag || e.dataTransfer.types.includes("application/x-dogani-cal"))) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
     markRange([c.dataset.date, c.dataset.date]);
   });
   grid.addEventListener("dragleave", (e) => { if (!grid.contains(e.relatedTarget)) markRange(null); });
   grid.addEventListener("drop", (e) => {
-    const c = e.target.closest(".cal-day"), txt = e.dataTransfer.getData("text/plain") || "";
+    const c = e.target.closest(".cal-day"), pending = calDrag;
+    let txt = e.dataTransfer.getData("text/plain") || "";
+    calDrag = "";   // 끌기 끝 알림이 안 와도(창 닫힘 등) 다음 바깥 끌기를 받지 않게
     markRange(null);
+    if (!txt.startsWith(TASK_DRAG) && pending) txt = pending;   // 장식은 브리지로 받은 데이터
+    if (c && txt.startsWith(DECO_DRAG)) {
+      e.preventDefault();
+      let t;
+      try { t = JSON.parse(txt.slice(DECO_DRAG.length)); } catch (err) { return; }
+      const sp = spaceByKey(t.sp), line = `- ${yymmdd(c.dataset.date)} ✦ ${String(t.text).replace(/[\r\n]/g, " ")}`;
+      if (!sp || !canEdit({ spaces: [sp.key] })) return;
+      if (state.calHidden.has(sp.key)) return alert(`'${sp.name}' 스페이스가 달력에서 꺼져 있어 장식이 보이지 않습니다. 달력 위 스페이스 체크를 켜고 다시 놓아 주세요.`);
+      editSchedDoc(sp, (text) => (text && !text.endsWith("\n") ? text + "\n" : text) + line + "\n")
+        .catch((err) => alert("장식 붙이기 실패: " + (err.message || err)));
+      return;
+    }
     if (!c || !txt.startsWith(TASK_DRAG)) return;
     e.preventDefault();
     let t;
@@ -1150,6 +1223,7 @@
   const sameSpace = (a, b) => a && b && a.key === b.key && a.server === b.server && a.prefix === b.prefix;
 
   window.App = {
+    setCalDrag(data) { calDrag = data || ""; },
     /**
      * 파이썬에서 호출 (바뀐 값만 와도 됨)
      * { mode, theme, space, spaces, calHidden, date, noteDate }

@@ -593,6 +593,13 @@ class Bridge(QObject):
             self.win.app.set_cal_hidden(keys)
 
     @Slot(str)
+    def setCalDrag(self, on):
+        """할일 창에서 달력에 놓을 수 있는 줄(할일·장식) 끌기 시작/끝 → 달력 창에 알림 (달력 칸 강조 여부)"""
+        cal = self.win.app.panels.get("cal")
+        if cal:
+            cal.call("setCalDrag", bool(on))
+
+    @Slot(str)
     def openUrl(self, url):
         if url.startswith(("http://", "https://", "mailto:")):
             QDesktopServices.openUrl(QUrl(url))
