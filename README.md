@@ -120,6 +120,8 @@ app\run.bat
 
 `app\run.bat --dir "D:\업무" --port 8765` 처럼 스페이스 폴더와 포트를 지정할 수 있습니다. 소스로 실행할 때는 자동 업데이트를 받지 않습니다. UI 파일을 저장하면 창이 새로 고쳐지고, 파이썬 파일을 저장하면 앱이 다시 시작됩니다.
 
+자동 시험은 `tests/` 에 있습니다. 저장소 루트에서 `python -m unittest discover -s tests -v`(서버 동기화), `node --test tests/`(노트 합치기), `python tests/e2e_ui.py`(화면 2개와 서버, 약 1분)를 실행합니다.
+
 ### 편집기 빌드
 
 편집기는 CodeMirror 6 기반이며 소스는 `app/editor/src/main.js` 에 있습니다. 고친 뒤 `app/editor/build.bat` 을 실행하면 `app/ui/vendor/editor.js` 가 만들어집니다. 이 과정에는 Node.js가 필요합니다.

@@ -2,6 +2,13 @@
 
 ## 미커밋 작업
 
+- 자동 시험을 `tests/` 로 모음 (예전엔 스크래치패드 일회용이라 매번 버려졌음). 실행 3종, 모두 통과:
+  - `python -m unittest discover -s tests -v` → 서버 동기화 11개 (`test_sync.py`)
+  - `node --test tests/` → 노트 합치기 `merge3` 14개 (`merge3.test.mjs`, `app.js` 에서 함수를 직접 잘라 써서 복사본 안 낡음)
+  - `python tests/e2e_ui.py` → 화면 2개(offscreen)+실제 서버 17개, 약 1분 (QtWebEngine 이라 unittest 와 따로)
+- 판단: `e2e_ui.py` 는 예전 스크립트를 현재 구조(`/api/s/<id>`, `ShareServer(port, name)`+`TeamHost`)에 맞춰 옮김. 출력 줄은 `os._exit` 전에 flush 하도록 고침
+- CLAUDE.md 에 `[시험]` 지침 추가 (개인 파일, 커밋 안 함)
+
 ## 아직 정할 것
 
 - 집 PC 가 같은 사람인데 팀원 이름이 겹치면 참여가 거절됨 → 지금은 `송민(집)` 처럼 다른 이름을 써야 함. "사람 하나 + 기기 여러 개" 로 묶을지
@@ -31,7 +38,7 @@
 
 ## 다음 할 일
 
-- 시험 넓히기: app.js `merge3`(줄 단위 합치기)를 node 로 단위 시험, 끊김 보관(`unsaved.json`) 다시 연결 시나리오
+- 시험 넓히기: 일정 파서(`schedule.py`)·공휴일 판정(`calendar.js offKind`)·팀원 인증(PIN·토큰) 시험
 
 
 - [ ] 리팩토링: `TeamHost` → `Space` 이름 정리, dogani.py 스페이스 코드를 모듈로 분리
