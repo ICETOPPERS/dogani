@@ -439,7 +439,7 @@ body.writable .cm-table-widget { cursor: text; }
   min-height: 0;
   /* 세로로만 자르고 가로는 보이게: 기간 띠가 옆 칸들까지 뻗어 나감 */
   overflow: visible;
-  clip-path: inset(0 -2000px 0 -2000px);
+  clip-path: inset(0 -2000px -6px -2000px);  /* 아래 -6px: 기간 띠가 칸 바닥까지 */
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -447,7 +447,10 @@ body.writable .cm-table-widget { cursor: text; }
 }
 .cal-day .singles, .cal-day .lanes { display: flex; flex-direction: column; gap: 1px; }
 .cal-day .singles { flex: 1 1 0; min-height: 0; overflow: hidden; }  /* 남는 자리만, 넘치면 +N */
-.cal-day .lanes { flex: none; margin-top: auto; }  /* 기간 띠: 칸 아래 고정 */
+/* 기간 띠: 칸 바닥(셀 안쪽 패딩·evs 여백까지 무시)에 붙임, 띠끼리 간격 0 */
+.cal-day .lanes { flex: none; margin-top: auto; margin-bottom: -6px; gap: 0; }
+.cal-day .lanes .ev { font-size: 9.5px; line-height: 14px; }
+.cal-day .lanes .ev.spacer { height: 14px; }
 .cal-day .ev { margin: 0 5px; }
 /* 장식(일정 파일 "✦" 줄): 한 단계 작은 연한 글자, 접지 않음. 우클릭 = 삭제 버튼 */
 .cal-day .deco {
@@ -529,7 +532,7 @@ body.writable .cm-table-widget { cursor: text; }
 .cal-day .ev.bar.fade-in:not(.arrow) .bar-label { padding-left: calc(100% / var(--n) * .35); }
 .ev.arrow.fade-in .ln:first-child { background: linear-gradient(90deg, transparent, var(--ev)); }
 .ev.arrow.fade-out .ln:last-child { background: linear-gradient(270deg, transparent, var(--ev)); }
-.ev.arrow .bar-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ev.arrow .bar-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-right: 2px; }  /* 기울어진 마지막 글자 안 잘리게 */
 .ev.arrow .bar-label::before { content: none !important; }
 /* 일정 마우스오버 = 클릭(수정)·드래그(옮기기) 가능 표시 */
 body.writable .cal-grid .ev[data-k] { cursor: grab; }

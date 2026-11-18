@@ -182,21 +182,30 @@
         if (ev.start !== ev.end && !seen.has(ev)) { seen.add(ev); multi.push(ev); }
       }
     }
-    multi.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.end > b.end ? -1 : 1));
-    const laneEnd = [];
-    const cells = week.map(() => []);
-    for (const ev of multi) {
+    // 이 주 안에서 차지하는 칸 범위. 짧은 띠가 위 줄로 (같으면 먼저 시작하는 것)
+    const segs = multi.map((ev) => {
       const s = Math.max(0, week.findIndex((d) => d >= ev.start));
       let e = week.length - 1;
       while (e > s && week[e] > ev.end) e--;
-      let lane = laneEnd.findIndex((x) => x < s);
-      if (lane < 0) lane = laneEnd.length;
-      laneEnd[lane] = e;
+      return { ev, s, e };
+    });
+    // 같은 태그(첫 태그 = 색)끼리 붙임: 태그 묶음 순서 = 묶음 안 가장 짧은 띠 길이, 묶음 안은 짧은 순. 태그 없는 건 각자 따로
+    const len = (g) => g.e - g.s, grp = (g) => (g.ev.tags && g.ev.tags[0]) || null, gMin = {};
+    for (const g of segs) { const t = grp(g); if (t !== null) gMin[t] = Math.min(gMin[t] ?? 99, len(g)); }
+    const rank = (g) => (grp(g) === null ? len(g) : gMin[grp(g)]);
+    segs.sort((a, b) => rank(a) - rank(b) || (grp(a) ?? "").localeCompare(grp(b) ?? "") ||
+      len(a) - len(b) || a.s - b.s || (a.ev.start < b.ev.start ? -1 : 1));
+    const used = [];  // used[lane][칸] = true
+    const cells = week.map(() => []);
+    for (const { ev, s, e } of segs) {
+      let lane = used.findIndex((u) => !u.slice(s, e + 1).some(Boolean));
+      if (lane < 0) { lane = used.length; used.push([]); }
+      for (let k = s; k <= e; k++) used[lane][k] = true;
       cells[s][lane] = rangeBar(ev, e - s + 1, week[s] === ev.start, week[e] === ev.end);
       for (let k = s + 1; k <= e; k++) cells[k][lane] = '<span class="ev spacer"></span>';
     }
     // 한 주의 모든 칸을 같은 줄 수로 채움 (띠 영역 높이가 같아야 옆 칸과 줄이 맞음)
-    const n = laneEnd.length;
+    const n = used.length;
     return cells.map((c) => Array.from({ length: n }, (_, l) => c[l] || '<span class="ev spacer"></span>'));
   }
 
