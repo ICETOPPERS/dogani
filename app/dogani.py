@@ -1145,8 +1145,8 @@ class doganiApp(QObject):
             self.tray.notify(f"{self.cfg['team'].get('team') or '팀'}에 {self.cfg['name']}(으)로 들어왔습니다.")
 
     def leave_team(self):
-        if QMessageBox.question(None, APP_NAME, "이 PC 에서 팀 로그아웃할까요?\n(팀원 목록에서 지워지지는 않습니다. "
-                                "다시 들어오려면 관리자에게 초대장을 받으세요.)") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(None, APP_NAME, "이 PC 에서 팀 로그아웃할까요?\n"
+                                "팀원 목록은 유지되며, 다시 참여하려면 관리자의 초대장이 필요합니다.") != QMessageBox.StandardButton.Yes:
             return
         self.cfg["team"] = dict(EMPTY_TEAM)
         self.cfg["space"] = ME
@@ -1434,7 +1434,7 @@ class doganiApp(QObject):
                                 "(팀스페이스는 트레이에서 팀스페이스 보기를 고르세요)")
             return
         if not os.path.isdir(path):
-            if QMessageBox.question(None, APP_NAME, f"폴더가 없습니다.\n{path}\n\n최근 목록에서 뺄까요?"
+            if QMessageBox.question(None, APP_NAME, f"폴더가 없습니다.\n{path}\n\n최근 목록에서 지울까요?"
                                     ) == QMessageBox.StandardButton.Yes:
                 self.cfg["space_dirs"] = [v for v in self.cfg["space_dirs"] if os.path.normcase(v) != os.path.normcase(path)]
                 save_config(self.cfg)

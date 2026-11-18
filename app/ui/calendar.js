@@ -95,13 +95,13 @@
     const badges = [t && (t.done ? "완료" : "할일"), ev.important && "중요", ev.holiday && "쉬는 날"].filter(Boolean)
       .map((b) => `<span class="tc-badge">${b}</span>`).join("");
     return `<div class="tc-title" style="--ev:${eventColor(ev)}">${esc(ev.title)}${badges}</div>` +
-      row("날짜", when) +
+      (t ? "" : row("날짜", when)) +
       row("장소", ev.place && esc(ev.place)) +
       row("스페이스", ev.spaceMarks && ev.spaceMarks.map((m) => `<span class="tc-chip"><i style="background:${m.color}"></i>${esc(m.name)}</span>`).join("")) +
       row("태그", (ev.tags || []).map((g) => `<span class="tc-chip tag-chip" style="--tc:${tagColor(g)}">${esc(g)}</span>`).join("")) +
       row("멤버", (ev.members || []).map((m) => `<span class="tc-chip">@${esc(m)}</span>`).join("")) +
       row("메모", ev.memo && esc(ev.memo)) +
-      row("노트", t && esc(t.note)) +
+      row("노트", t && esc(t.note) + " 등록") +
       row("작성", ev.who && ev.who.by && esc(ev.who.by)) +
       row("수정", ev.who && ev.who.mod && esc(ev.who.mod));
   }
@@ -116,7 +116,7 @@
   // 할일(노트의 날짜 붙은 체크박스): 앞에 체크 네모, 완료면 취소선 (ev.task = {sp, note, line, raw, done})
   const taskBox = (ev) => (ev.task ? `<span class="ev-check${ev.task.done ? " on" : ""}"></span>` : "");
   const evAttrs = (ev, cls) => `class="${cls.join(" ")}${ev.task ? " task" + (ev.task.done ? " done" : "") : ""}" data-k="${ev.k ?? ""}" style="--ev:${eventColor(ev)}" ` +
-    `title="${esc((ev.spaceMarks ? `[${ev.spaceMarks.map((m) => m.name).join(" · ")}] ` : "") + eventTip(ev))}"`;
+    `data-tip="${esc((ev.spaceMarks ? `[${ev.spaceMarks.map((m) => m.name).join(" · ")}] ` : "") + eventTip(ev))}"`;
 
   /** 노트 위 일정 줄용 칩 (시간·장소까지) */
   function chip(ev) {
@@ -279,7 +279,7 @@
         const more = document.createElement("span");
         more.className = "ev ev-more";
         more.textContent = `+${evs.length}`;
-        more.title = evs.map((el) => el.title).join("\n\n");
+        more.title = evs.map((el) => el.dataset.tip).join("\n\n");
         at.after(more);
         at = more;
       }
@@ -298,7 +298,7 @@
   function dayEvents(d, idx) {
     // 그날 노트에 이미 있는 할일은 일정 줄에 또 띄우지 않음
     const evs = ((idx && idx.byDate[d]) || []).filter((ev) => !(ev.task && ev.task.note === d));
-    return evs.map(chip).join("");
+    return evs.map(chip).join("").replace(/ data-tip="/g, ' title="');   // 할일 창엔 미리보기 카드가 없어 기본 툴팁 유지
   }
 
   window.doganiCalendar = {

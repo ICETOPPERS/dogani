@@ -930,20 +930,20 @@
       } catch (e) {
         const msg = (this.ev ? "저장 실패: " : "추가 실패: ") + (e.message || e);
         // 일부 스페이스만 저장됨 → 팝업 내용(사본 위치)이 낡아 다시 누르면 꼬임. 닫고 다시 열게 함
-        if (e.partial) { this.close(); alert(msg + "\n\n나머지 스페이스는 저장됐습니다. 일정을 다시 열어 확인하세요."); }
+        if (e.partial) { this.close(); alert(msg + "\n\n다른 스페이스에는 저장되었습니다. 일정을 다시 열어 확인하세요."); }
         else $("ev-add-err").textContent = msg;
       }
     },
     async remove() {
       if (!this.ev) return;
       const where = (this.ev.spaces || []).length > 1
-        ? `\n(${this.ev.spaces.map((k) => (spaceByKey(k) || { name: k }).name).join(", ")} 모두에서 지웁니다. 한 곳에서만 빼려면 그 스페이스 체크를 끄고 저장)` : "";
+        ? `\n(${this.ev.spaces.map((k) => (spaceByKey(k) || { name: k }).name).join(", ")} 모두에서 삭제됩니다. 한 곳에서만 지우려면 해당 스페이스 선택을 해제하고 저장하세요.)` : "";
       if (!confirm(`'${this.ev.title}' 일정을 지울까요?${where}`)) return;
       try {
         await writeEv(this.ev, null, []);
         this.close();
       } catch (e) {
-        if (e.partial) { this.close(); alert("삭제 실패: " + (e.message || e) + "\n\n나머지 스페이스에서는 지웠습니다."); }
+        if (e.partial) { this.close(); alert("삭제 실패: " + (e.message || e) + "\n\n다른 스페이스에서는 삭제되었습니다."); }
         else $("ev-add-err").textContent = "삭제 실패: " + (e.message || e);
       }
     },
@@ -1060,9 +1060,9 @@
     if (ev && e.button === 2) {
       // 일정·할일 위 오른쪽 버튼 = 새 일정 말고 바로 그 항목 편집 (할일 = 노트 열기)
       if (ev.task) {   // 할일 우클릭 = 달력에서 빼기 (노트 줄은 그대로, 날짜·✅ 만 지움). 노트 열기는 왼쪽 클릭
-        if (canEdit(ev) && confirm(`'${ev.title}' 을(를) 달력에서 뺄까요?
-(노트의 할일 줄은 그대로, 날짜만 지움)`))
-          editTask(ev.task, (l) => l.replace(TASK_DATE_RE, "").replace(TASK_DONE_RE, "")).catch((err) => alert("빼기 실패: " + (err.message || err)));
+        if (canEdit(ev) && confirm(`'${ev.title}' 할일 보기를 지울까요?
+노트에는 그대로 남습니다.`))
+          editTask(ev.task, (l) => l.replace(TASK_DATE_RE, "").replace(TASK_DONE_RE, "")).catch((err) => alert("할일 보기를 지우지 못했습니다.\n" + (err.message || err)));
       }
       else if (canEdit(ev)) {
         evAdd.close();   // 열려 있던 팝업은 닫고
@@ -1152,7 +1152,8 @@
       try { t = JSON.parse(txt.slice(DECO_DRAG.length)); } catch (err) { return; }
       const sp = spaceByKey(t.sp), line = `- ${yymmdd(c.dataset.date)} ✦ ${String(t.text).replace(/[\r\n]/g, " ")}`;
       if (!sp || !canEdit({ spaces: [sp.key] })) return;
-      if (state.calHidden.has(sp.key)) return alert(`'${sp.name}' 스페이스가 달력에서 꺼져 있어 장식이 보이지 않습니다. 달력 위 스페이스 체크를 켜고 다시 놓아 주세요.`);
+      if (state.calHidden.has(sp.key)) return alert(`'${sp.name}' 스페이스가 꺼져 있어 장식이 표시되지 않습니다.
+스페이스를 켠 뒤 다시 놓아 주세요.`);
       editSchedDoc(sp, (text) => (text && !text.endsWith("\n") ? text + "\n" : text) + line + "\n")
         .catch((err) => alert("장식 붙이기 실패: " + (err.message || err)));
       return;
@@ -1263,7 +1264,7 @@
     if (move || drag) return tipClear();
     const ev = evOf(e.target.closest(".ev[data-k]"));
     clearTimeout(tipShow);
-    if (!ev) { if (!tagTip.hidden) { clearTimeout(tipHide); tipHide = setTimeout(tipClear, 150); } return; }
+    if (!ev) return tipClear();
     clearTimeout(tipHide);
     const x = e.clientX, y = e.clientY;
     tipShow = setTimeout(() => tipRender(x, y), 100);
@@ -1310,7 +1311,11 @@
   setInterval(loadOtherSchedules, 60 * 1000);
   let fitTimer = null;
   // 창 크기뿐 아니라 숨어 있다 보일 때도(그릴 때 숨어 있으면 넘침 정리가 안 돼 띠가 겹침) 다시 맞춤
-  new ResizeObserver(() => {
+  let gridSize = "";
+  new ResizeObserver(([en]) => {
+    const sz = Math.round(en.contentRect.width) + "x" + Math.round(en.contentRect.height);
+    if (sz === gridSize) return;   // 넘침 정리(fitCells)로 생긴 미세 변화엔 다시 안 맞춤 → 깜빡임 방지
+    gridSize = sz;
     clearTimeout(fitTimer);
     fitTimer = setTimeout(() => { if (state.mode === "cal" && state.calView === "month") CAL.fitCells($("cal-grid")); }, 100);
   }).observe($("cal-grid"));

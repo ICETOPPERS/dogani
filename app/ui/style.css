@@ -447,7 +447,8 @@ body.writable .cm-table-widget { cursor: text; }
   gap: 1px;
   margin: 2px -5px;  /* 칸 테두리까지 넓혀서 기간 일정이 옆 칸과 이어지게 */
 }
-.cal-day .singles, .cal-day .lanes { display: flex; flex-direction: column; gap: 1px; }
+.cal-day .singles, .cal-day .lanes { display: flex; flex-direction: column; }
+.cal-day .singles > .ev, .cal-day .lanes > .ev { border-bottom: 1px solid transparent; background-clip: padding-box; }   /* 간격도 일정 영역 → 사이에서 커서·카드 안 떨림 */
 .cal-day .singles { flex: 1 1 0; min-height: 0; overflow: hidden; }  /* 남는 자리만, 넘치면 +N */
 /* 기간 띠: 칸 바닥(셀 안쪽 패딩·evs 여백까지 무시)에 붙임, 띠끼리 간격 0 */
 .cal-day .lanes { flex: none; margin-top: auto; margin-bottom: -6px; gap: 0; }
@@ -491,7 +492,7 @@ body.writable .cm-table-widget { cursor: text; }
 }
 .ev.important { font-weight: 700; }
 /* 중요 = 제목 앞 작은 깃발 (중요 메일 표시처럼) */
-.ev-flag { display: inline-block; width: calc(9px * var(--fz, 1)); height: calc(9px * var(--fz, 1)); margin-right: 2px; vertical-align: -1px; fill: #e5484d; stroke: #e5484d; stroke-width: 1.3; stroke-linejoin: round; }
+.ev-flag { display: inline-block; width: .85em; height: .85em; margin-right: 2px; vertical-align: -.1em; fill: #e5484d; stroke: #e5484d; stroke-width: 1.3; stroke-linejoin: round; }
 .ev.holiday { --bg: color-mix(in srgb, var(--ev) 30%, transparent); }
 /* 10:00-10:30? 시간 미정: 옅게 */
 .ev.unsure { opacity: .65; }
@@ -594,7 +595,8 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
   padding: 6px 6px 4px 12px;
   flex: none;
   cursor: move;
-  min-height: 34px;
+  height: 38px;
+  box-sizing: border-box;
 }
 .panel-bar .close-btn { font-size: 13px; color: var(--text-muted); width: 26px; }
 .panel-bar .header-title { cursor: move; }
