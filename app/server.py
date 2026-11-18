@@ -90,6 +90,39 @@ def count_tasks(text):
     return done, total
 
 
+TASK_DATE_RE = re.compile("\\s*(\U0001F6EB|\U0001F4C5)\uFE0F?\\s*(\\d{4}-\\d{2}-\\d{2})")   # 🛫 시작 / 📅 마감 (옵시디언 Tasks)
+TASK_HEAD_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[.\]\s*")
+TASK_MARK_RE = re.compile(r"\*\*|==|~~|\[\[|\]\]")
+
+
+def dated_tasks(text):
+    """날짜(🛫/📅)가 붙은 체크박스 줄 → [{line, raw, done, title, start, end}] (달력에 비춰 보이는 할일)"""
+    out, in_fence = [], False
+    for i, line in enumerate(text.split("\n")):
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        m = None if in_fence else TASK_RE.match(line)
+        if not m:
+            continue
+        dates = {k: v for k, v in TASK_DATE_RE.findall(line)}
+        if not dates:
+            continue
+        try:
+            for v in dates.values():
+                dt.date.fromisoformat(v)
+        except ValueError:
+            continue
+        start = dates.get("\U0001F6EB") or dates["\U0001F4C5"]
+        end = dates.get("\U0001F4C5") or start
+        if end < start:
+            start, end = end, start
+        title = TASK_MARK_RE.sub("", TASK_DATE_RE.sub("", TASK_HEAD_RE.sub("", line))).strip()
+        out.append({"line": i, "raw": line.rstrip("\r"), "done": m[1] != " ",
+                    "title": title or "(제목 없음)", "start": start, "end": end})
+    return out
+
+
 class NoteStore:
     """todo 폴더를 주기적으로 스캔해서 날짜→파일 매핑과 완료 통계를 유지."""
 
@@ -98,6 +131,7 @@ class NoteStore:
         self.root = ""
         self.files = {}    # date -> (path, mtime_ns, size)
         self.summary = {}  # date -> (done, total)
+        self.tasks = {}    # date -> 날짜 붙은 할일 (dated_tasks)
         self.blank = set()       # 내용이 빈 노트 날짜 (어제 노트 복사 대상에서 뺌)
         self.sched_files = {}    # path -> (mtime_ns, size)
         self.events = []         # 일정 파일에서 읽은 일정
@@ -109,6 +143,7 @@ class NoteStore:
             self.root = root
             self.files = {}
             self.summary = {}
+            self.tasks = {}
             self.blank = set()
             self.sched_files = {}
             self.events = []
@@ -174,13 +209,16 @@ class NoteStore:
                     try:
                         text = read_text(info[0])
                         self.summary[d] = count_tasks(text)
+                        self.tasks[d] = dated_tasks(text)
                         self.blank.discard(d) if text.strip() else self.blank.add(d)
                     except OSError:
                         self.summary[d] = (0, 0)
+                        self.tasks.pop(d, None)
             for d in list(self.files):
                 if d not in found:
                     changed.append(d)
                     self.summary.pop(d, None)
+                    self.tasks.pop(d, None)
                     self.blank.discard(d)
             self.files = found
             self.pending.update(changed)
@@ -199,6 +237,11 @@ class NoteStore:
     def schedule(self):
         with self.lock:
             return list(self.events)
+
+    def dated_tasks(self):
+        """모든 노트의 날짜 붙은 할일 (note = 노트 날짜)"""
+        with self.lock:
+            return [{**t, "note": d.isoformat()} for d in sorted(self.tasks) for t in self.tasks[d]]
 
     def prev_note(self, d):
         """d 이전에 있는 가장 최근 노트(빈 노트 제외) 날짜 (어제 노트 복사용)"""
@@ -430,7 +473,7 @@ class Handler(BaseHTTPRequestHandler):
                                     "today": dt.date.today().isoformat(), "kind": "personal", "writable": True})
         if path == "/events":
             return self._stream(share.hub, ctx)
-        self._space(method, path, qs, share.store, share.hub, writable=True)
+        self._space(method, path, qs, share.store, share.hub, writable=True, tasks=True)
 
     # ------------------------------------------------------------ 팀스페이스
     def _team(self, method, path, qs, ctx):
@@ -475,7 +518,7 @@ class Handler(BaseHTTPRequestHandler):
                     stamp=lambda old, new: schedule.stamp(old, new, mid))
 
     # ------------------------------------------------------------ 스페이스 공통 (개인·팀)
-    def _space(self, method, path, qs, store, hub, writable, stamp=None):
+    def _space(self, method, path, qs, store, hub, writable, stamp=None, tasks=False):
         if method == "POST":
             if not writable:
                 return self._send_json({"error": "read_only"}, 403)
@@ -505,7 +548,10 @@ class Handler(BaseHTTPRequestHandler):
             d = dt.date.fromisoformat(qs.get("date", [dt.date.today().isoformat()])[0])
             self._send_json(store.note(d))
         elif path == "/schedule":
-            self._send_json({"events": store.schedule()})
+            res = {"events": store.schedule()}
+            if tasks:   # 개인 스페이스만: 날짜 붙은 할일 (팀스페이스 노트의 할일은 안 보냄)
+                res["tasks"] = store.dated_tasks()
+            self._send_json(res)
         elif path == "/sched-doc":
             self._send_json(store.sched_doc())
         elif path == "/month":

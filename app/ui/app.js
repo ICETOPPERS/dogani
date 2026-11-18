@@ -35,6 +35,7 @@
     teamNames: [],     // 팀스페이스 팀원 이름 (/schedule 의 members, 멤버 칩 후보)
     calHidden: new Set(), // 달력·할일 일정에서 숨긴 스페이스 키 (설정 cal_hidden, 창끼리 같이 씀)
     evBySpace: {},     // 스페이스 키 → /schedule 일정 목록
+    tasksBySpace: {},  // 스페이스 키 → /schedule 의 날짜 붙은 할일 (개인 스페이스만 옴)
     roSpaces: new Set(), // 읽기만 허용된 스페이스 키 (팀 관리자가 편집 허용을 끔. /schedule 의 writable)
     sched: null,       // 일정 색인 (CAL.index)
   };
@@ -142,6 +143,7 @@
     try {
       const res = await api("/schedule", undefined, spBase(sp));
       state.evBySpace[sp.key] = res.events || [];
+      state.tasksBySpace[sp.key] = res.tasks || [];
       if (res.members) state.teamNames = res.members;
       const ro = res.writable === false;
       if (ro !== state.roSpaces.has(sp.key)) {
@@ -183,7 +185,15 @@
     }
     list.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
     state.schedAll = list;   // 태그로 거르기 전 (태그 필터 목록을 만들 때 씀)
-    state.sched = CAL.index(list.filter((ev) => tagShown(ev) && memberShown(ev)));
+    // 노트의 날짜 붙은 할일: 일정처럼 그리지만 원본은 노트 줄 (태그·멤버 체크와 상관없이 보임)
+    const tasks = [];
+    for (const sp of shown) {
+      for (const t of state.tasksBySpace[sp.key] || []) {
+        tasks.push({ start: t.start, end: t.end, title: t.title, tags: [], members: [], spaces: [sp.key],
+          task: { sp: sp.key, note: t.note, line: t.line, raw: t.raw, done: t.done } });
+      }
+    }
+    state.sched = CAL.index([...list.filter((ev) => tagShown(ev) && memberShown(ev)), ...tasks]);
     if (state.mode === "cal" && state.calView === "month") renderMonth();
     if (state.mode === "note") renderSchedRow();
   }
@@ -278,6 +288,10 @@
           onFocus() { if (state.writable) p.editing = true; },
           onBlur() { if (p.editing) { p.editing = false; p.save(); } },
           onSave: () => p.save(),
+          // 줄 손잡이: 끌기 시작 = 저장, 다른 창(달력)에 놓았으면 편집 끝 (달력이 같은 노트를 고침 → 다시 읽기)
+          onDragStart: () => p.save(),
+          onDragEnd: (moved) => { if (!moved) p.exit(); },
+          dragData: (i, text) => (o.dragData ? o.dragData(i, text) : null),
           openUrl: (url) => (bridge ? bridge.openUrl(url) : window.open(url)),
         });
       } else if (p.editor.getDoc() !== text) {
@@ -551,6 +565,13 @@
   $("cal-grid").addEventListener("click", (e) => {
     if (dragged) { dragged = false; return; }  // 드래그로 기간 고르거나 일정 옮긴 뒤의 click 은 무시
     const ev = evOf(e.target.closest(".ev[data-k]"));
+    // 할일: 체크 네모 = 노트 줄 체크/해제, 나머지 = 그 노트 열기
+    if (ev && ev.task) {
+      if (e.target.closest(".ev-check")) {
+        if (canEdit(ev)) editTask(ev.task, toggleTaskLine).catch((err) => alert("체크 실패: " + (err.message || err)));
+      } else if (bridge) bridge.openNote(ev.task.note);
+      return;
+    }
     // 일정 클릭 = 수정 팝업 (읽기 전용이면 그냥 노트 열기)
     if (ev && canEdit(ev)) { evAdd.open("", "", e.clientX, e.clientY, ev); return; }
     const cell = e.target.closest(".cal-day");
@@ -597,6 +618,53 @@
       title: ev.title, tags: ev.tags || [], members: ev.members || [], place: ev.place || "", memo: ev.memo || "",
     };
   }
+  // ---- 할일(노트 체크박스 줄) 날짜: 옵시디언 Tasks 형식 `🛫 시작` `📅 마감` (YYYY-MM-DD)
+  const TASK_DRAG = "dogani-task:";   // 할일 창 손잡이 → 달력 끌어 놓기 (text/plain 앞머리)
+  const TASK_BOX_RE = /^(\s*(?:[-*+]|\d+[.)])\s+\[)(.)(\])/;
+  const TASK_DATE_RE = /\s*(🛫|📅)️?\s*(\d{4}-\d{2}-\d{2})/gu;
+  const toggleTaskLine = (l) => l.replace(TASK_BOX_RE, (_, a, c, b) => a + (c === " " ? "x" : " ") + b);
+  /** 줄의 날짜 → {s, e} (없으면 null). 서버 dated_tasks 와 같은 규칙 */
+  function taskDatesOf(l) {
+    const d = {};
+    for (const m of l.matchAll(TASK_DATE_RE)) d[m[1]] = m[2];
+    if (!d["🛫"] && !d["📅"]) return null;
+    const s = d["🛫"] || d["📅"], e = d["📅"] || s;
+    return s <= e ? { s, e } : { s: e, e: s };
+  }
+  /** 줄의 날짜를 s~e 로 바꿈 (하루 = 📅 만). 줄 끝 블록 id(^abc) 앞에 둠 */
+  function setTaskDates(l, s, e) {
+    const body = l.replace(TASK_DATE_RE, "").trimEnd(), m = body.match(/\s\^[\w-]+$/);
+    const head = m ? body.slice(0, -m[0].length) : body, dates = s === e ? ` 📅 ${e}` : ` 🛫 ${s} 📅 ${e}`;
+    return head + dates + (m ? m[0] : "");
+  }
+  /** 할일 줄 고치기: t = {sp, note, line, raw}, fn(줄) → 새 줄. 줄 번호가 안 맞으면 같은 글자 줄을 찾음. 충돌 시 한 번 더 */
+  async function editTask(t, fn) {
+    const sp = spaceByKey(t.sp), base = spBase(sp);
+    if (!sp) throw new Error("스페이스를 찾지 못했습니다.");
+    for (let tries = 0; tries < 2; tries++) {
+      try {
+        const d = await api(`/note?date=${t.note}`, undefined, base);
+        if (!d.exists) throw new Error("노트를 찾지 못했습니다.");
+        const eol = d.content.includes("\r\n") ? "\r\n" : "\n", lines = d.content.split(/\r\n|\n/);
+        const i = lines[t.line] === t.raw ? t.line : lines.indexOf(t.raw);
+        if (i < 0 || !TASK_BOX_RE.test(lines[i])) throw new Error("노트에서 이 할일 줄을 찾지 못했습니다 (그 사이 바뀜).");
+        lines[i] = fn(lines[i]);
+        await api("/note", { date: t.note, content: lines.join(eol), base_mtime: d.mtime }, base);
+        await loadSchedule(sp);
+        return;
+      } catch (e) {
+        if (e.code === "conflict" && tries === 0) continue;
+        throw e;
+      }
+    }
+  }
+  /** 달력에서 끌기: mode = move(통째로) | start(앞 가장자리) | end(뒤 가장자리) → [시작, 끝] */
+  function dragRange(ev, mode, n) {
+    if (mode === "start") return sorted(CAL.addDays(ev.start, n), ev.end);
+    if (mode === "end") return sorted(ev.start, CAL.addDays(ev.end, n));
+    return [CAL.addDays(ev.start, n), CAL.addDays(ev.end, n)];
+  }
+
   /** 스페이스 sp 의 일정 파일 고치기: fn(text) → 새 text. 충돌(409) 나면 다시 읽고 한 번 더 */
   async function editSchedDoc(sp, fn) {
     const base = spBase(sp);
@@ -833,8 +901,15 @@
     const ev = evOf(evEl);
     if (ev && e.button === 0) {
       // 일정 위 왼쪽 버튼: 옮기기 준비 (그냥 떼면 click → 수정 팝업). 읽기 전용은 안 됨
+      if (e.target.closest(".ev-check")) return;   // 할일 체크 네모 = click 에서 체크
       const c = canEdit(ev) && cellAt(e.clientX, e.clientY);
-      if (c) move = { ev, el: evEl, from: c.dataset.date, to: c.dataset.date };
+      let mode = "move";
+      if (c && ev.task) {   // 할일은 가장자리를 끌면 기간 늘이고 줄이기
+        const r = evEl.getBoundingClientRect(), bar = evEl.classList.contains("bar");
+        if (e.clientX - r.left < 6 && (!bar || evEl.classList.contains("head"))) mode = "start";
+        else if (r.right - e.clientX < 6 && (!bar || evEl.classList.contains("tail"))) mode = "end";
+      }
+      if (c) move = { ev, el: evEl, mode, from: c.dataset.date, to: c.dataset.date };
       return;
     }
     const cell = e.target.closest(".cal-day");
@@ -848,7 +923,7 @@
     move.to = c.dataset.date;
     const n = dayDiff(move.from, move.to);
     move.el.classList.toggle("moving", n !== 0);
-    markRange(n ? [CAL.addDays(move.ev.start, n), CAL.addDays(move.ev.end, n)] : null);
+    markRange(n ? dragRange(move.ev, move.mode, n) : null);
   });
   $("cal-grid").addEventListener("mouseover", (e) => {
     const cell = drag && e.target.closest(".cal-day");
@@ -865,6 +940,11 @@
       markRange(null);
       if (!n) return;  // 제자리 = 클릭 (수정 팝업은 click 에서)
       dragged = true;
+      if (m.ev.task) {
+        const [s, en] = dragRange(m.ev, m.mode, n);
+        editTask(m.ev.task, (l) => setTaskDates(l, s, en)).catch((err) => alert("옮기기 실패: " + (err.message || err)));
+        return;
+      }
       const o = evToObj(m.ev);
       if (o.s) o.s = CAL.addDays(o.s, n);
       if (o.e) o.e = CAL.addDays(o.e, n);
@@ -883,6 +963,27 @@
     markRange(r);
     evAdd.open(r[0], r[1], e.clientX, e.clientY);
   });
+  // 할일 창 손잡이(⋮⋮)를 달력 칸에 끌어 놓기 = 그 할일 줄에 날짜를 붙임 (이미 기간이면 길이 유지)
+  const grid = $("cal-grid");
+  grid.addEventListener("dragover", (e) => {
+    const c = e.target.closest(".cal-day");
+    if (!c || !e.dataTransfer.types.includes("text/plain")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    markRange([c.dataset.date, c.dataset.date]);
+  });
+  grid.addEventListener("dragleave", (e) => { if (!grid.contains(e.relatedTarget)) markRange(null); });
+  grid.addEventListener("drop", (e) => {
+    const c = e.target.closest(".cal-day"), txt = e.dataTransfer.getData("text/plain") || "";
+    markRange(null);
+    if (!c || !txt.startsWith(TASK_DRAG)) return;
+    e.preventDefault();
+    let t;
+    try { t = JSON.parse(txt.slice(TASK_DRAG.length)); } catch (err) { return; }
+    const d = c.dataset.date, old = taskDatesOf(t.raw || ""), len = old ? dayDiff(old.s, old.e) : 0;
+    editTask(t, (l) => setTaskDates(l, d, CAL.addDays(d, len))).catch((err) => alert("달력에 올리기 실패: " + (err.message || err)));
+  });
+
   // 스페이스 칩에 마우스 올림 = 그 스페이스 일정 표시 (평소엔 색을 안 그림)
   function spaceHover(key) {
     const grid = $("cal-grid"), sp = key && spaceByKey(key);

@@ -414,6 +414,142 @@ function toggleTaskAt(view, pos) {
   return true;
 }
 
+// ------------------------------------------------------------ 줄 손잡이 (노션 블록처럼 보이게: 줄 = 블록, 들여쓴 아래 줄 = 자식)
+const indentOf = (t) => { let w = 0; for (const c of t) { if (c === " ") w++; else if (c === "\t") w += 4; else break; } return w; };
+
+/** 줄 n(1부터)과 그 아래 더 들여쓴 줄들 → [첫 줄, 끝 줄] (빈 줄에서 끊음) */
+function blockLines(doc, n) {
+  const base = indentOf(doc.line(n).text);
+  let e = n;
+  while (e < doc.lines) {
+    const t = doc.line(e + 1).text;
+    if (!t.trim() || indentOf(t) <= base) break;
+    e++;
+  }
+  return [n, e];
+}
+
+/** 줄 a~b 를 줄 to 앞으로 옮김 (to = 1..lines+1, lines+1 = 맨 끝). 제자리면 false */
+function moveLines(view, a, b, to) {
+  const doc = view.state.doc;
+  if (to >= a && to <= b + 1) return false;
+  const from = doc.line(a).from, end = doc.line(b).to, text = doc.sliceString(from, end);
+  const changes = [b < doc.lines ? { from, to: end + 1 } : { from: from - 1, to: end }];
+  changes.push(to <= doc.lines ? { from: doc.line(to).from, insert: text + "\n" } : { from: doc.length, insert: "\n" + text });
+  view.dispatch({ changes, userEvent: "move.line" });
+  return true;
+}
+
+const DOTS = '<svg viewBox="0 0 10 16" aria-hidden="true">' +
+  [3, 8, 13].map((y) => `<circle cx="3" cy="${y}" r="1.4"/><circle cx="7" cy="${y}" r="1.4"/>`).join("") + "</svg>";
+
+/**
+ * 마우스를 올린 줄(블록)을 옅게 강조하고 왼쪽에 ⋮⋮ 손잡이. 손잡이를 끌어 놓으면 줄 옮기기(하위 줄 같이).
+ * 다른 창(달력)에 놓을 때 데이터 = opts.dragData(줄 번호 0부터, 줄 글자) 가 주면 그것, 아니면 줄 글자
+ */
+function blockHandle(call) {
+  return ViewPlugin.fromClass(class {
+    constructor(view) {
+      this.view = view;
+      this.line = 0;
+      this.drag = null;
+      const mk = (cls) => { const el = document.createElement("div"); el.className = cls; el.hidden = true; view.scrollDOM.appendChild(el); return el; };
+      this.hl = mk("cm-block-hl");
+      this.mark = mk("cm-drop-mark");
+      this.h = mk("cm-block-handle");
+      this.h.draggable = true;
+      this.h.title = "끌어서 줄 옮기기 (할일은 달력 칸에 놓으면 날짜가 붙음)";
+      this.h.innerHTML = DOTS;
+      this.on = [
+        [view.scrollDOM, "mousemove", (e) => this.hover(e)],
+        [view.scrollDOM, "mouseleave", () => { if (!this.drag) this.hide(); }],
+        [view.dom, "keydown", () => { if (!this.drag) this.hide(); }],
+        [view.dom, "dragover", (e) => this.over(e), true],
+        [view.dom, "drop", (e) => this.drop(e), true],
+        [this.h, "dragstart", (e) => this.start(e)],
+        [this.h, "dragend", () => this.end()],
+      ];
+      for (const [el, t, f, cap] of this.on) el.addEventListener(t, f, !!cap);
+    }
+    lineAtY(y) {
+      const v = this.view, b = v.lineBlockAtHeight(y - v.documentTop);
+      return v.state.doc.lineAt(b.from);
+    }
+    /** 문서 위치 → scrollDOM 안 좌표 */
+    rel(top, left) {
+      const v = this.view, sr = v.scrollDOM.getBoundingClientRect();
+      return [top + v.documentTop - sr.top + v.scrollDOM.scrollTop, left - sr.left + v.scrollDOM.scrollLeft];
+    }
+    hover(e) {
+      if (this.drag || !this.view.state.facet(EditorView.editable) || this.h.contains(e.target)) return;
+      const ln = this.lineAtY(e.clientY);
+      if (!ln.text.trim()) { this.hide(); return; }
+      if (ln.number !== this.line || this.h.hidden) this.show(ln.number);
+    }
+    show(n) {
+      const v = this.view, doc = v.state.doc, ln = doc.line(n), [, b] = blockLines(doc, n);
+      const first = v.lineBlockAt(ln.from), last = v.lineBlockAt(doc.line(b).from);
+      const ws = ln.text.match(/^\s*/)[0].length;
+      const c = v.coordsAtPos(ln.from + ws, 1) || v.coordsAtPos(ln.from, 1);
+      const x = c ? c.left : v.contentDOM.getBoundingClientRect().left;
+      const [top, left] = this.rel(first.top, x);
+      const lh = c ? c.bottom - c.top : v.defaultLineHeight;
+      this.line = n;
+      Object.assign(this.h.style, { top: top + (lh - 22) / 2 + "px", left: Math.max(0, left - 24) + "px" });
+      Object.assign(this.hl.style, { top: top + "px", left: Math.max(0, left - 4) + "px", height: last.bottom - first.top + "px" });
+      this.h.hidden = this.hl.hidden = false;
+    }
+    hide() { this.h.hidden = this.hl.hidden = this.mark.hidden = true; }
+    start(e) {
+      const v = this.view, doc = v.state.doc;
+      if (!this.line || this.line > doc.lines) { e.preventDefault(); return; }
+      const [a, b] = blockLines(doc, this.line);
+      this.drag = { a, b, to: 0, moved: false };
+      call("onDragStart");
+      const text = doc.sliceString(doc.line(a).from, doc.line(b).to);
+      e.dataTransfer.effectAllowed = "copyMove";
+      e.dataTransfer.setData("text/plain", call("dragData", a - 1, doc.line(a).text) || text);
+      const dom = v.domAtPos(doc.line(a).from + 1).node;
+      const lineEl = dom && (dom.nodeType === 1 ? dom : dom.parentElement).closest(".cm-line");
+      if (lineEl) e.dataTransfer.setDragImage(lineEl, 0, 8);
+    }
+    over(e) {
+      if (!this.drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      const v = this.view, doc = v.state.doc, ln = this.lineAtY(e.clientY), blk = v.lineBlockAt(ln.from);
+      const below = e.clientY - v.documentTop > blk.top + blk.height / 2;
+      const to = below ? ln.number + 1 : ln.number;
+      this.drag.to = to;
+      const ok = !(to >= this.drag.a && to <= this.drag.b + 1);
+      const y = to <= doc.lines ? v.lineBlockAt(doc.line(to).from).top : v.lineBlockAt(doc.line(doc.lines).from).bottom;
+      const [top, left] = this.rel(y, v.contentDOM.getBoundingClientRect().left);
+      Object.assign(this.mark.style, { top: top - 1 + "px", left: left + 12 + "px" });
+      this.mark.hidden = !ok;
+    }
+    drop(e) {
+      if (!this.drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const d = this.drag;
+      if (d.to) d.moved = moveLines(this.view, d.a, d.b, d.to);
+      this.mark.hidden = true;
+    }
+    end() {
+      const moved = !!(this.drag && this.drag.moved);
+      this.drag = null;
+      this.hide();
+      call("onDragEnd", moved);
+    }
+    update(u) { if ((u.docChanged || u.geometryChanged) && !this.drag) this.hide(); }
+    destroy() {
+      for (const [el, t, f, cap] of this.on) el.removeEventListener(t, f, !!cap);
+      this.h.remove(); this.hl.remove(); this.mark.remove();
+    }
+  });
+}
+
 /** 탭/스페이스 들여쓰기 중 노트가 이미 쓰고 있는 것 */
 function detectIndent(text) {
   if (/^\t+\S/m.test(text)) return "\t";
@@ -429,6 +565,7 @@ function create(parent, opts) {
   const readOnlyExt = (r) => [EditorState.readOnly.of(r), EditorView.editable.of(!r)];
   const call = (name, ...a) => opts[name] && opts[name](...a);
   const table = tableField(opts.tableHtml || ((l) => l.join("<br>")));
+  const handle = blockHandle(call);
 
   const extensions = (text, r) => [
     focusField, focusSync,
@@ -447,6 +584,7 @@ function create(parent, opts) {
     ]),
     livePreview,
     table,
+    handle,
     ro.of(readOnlyExt(r)),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) call("onChange", u.state.doc.toString(), u.transactions.some((tr) => tr.isUserEvent("input.toggle")));

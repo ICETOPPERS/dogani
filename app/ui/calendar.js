@@ -64,6 +64,10 @@
   }
 
   function eventTip(ev) {
+    if (ev.task) {
+      const r = ev.start === ev.end ? ev.end : `${ev.start} ~ ${ev.end}`;
+      return [`${ev.task.done ? "[완료] " : ""}${ev.title}`, r, `할일 · ${ev.task.note} 노트 (가장자리를 끌면 기간 조절)`].join("\n");
+    }
     const range = ev.open === "start" ? `~ ${ev.end} (시작 미정)`
       : ev.open === "end" ? `${ev.start} ~ (끝 미정)`
       : ev.start === ev.end ? ev.start : `${ev.start} ~ ${ev.end}`;
@@ -85,7 +89,9 @@
   const timeText = (ev) => (ev.time || "") + q(ev);
   const shortTime = (ev) => (ev.time || "").split("-")[0] + q(ev);
   // 스페이스가 둘 이상 보이면(ev.spaceMarks) 툴팁 앞에 [스페이스 이름들]. 스페이스 색은 달력 위 칩에 마우스를 올릴 때만 (app.js)
-  const evAttrs = (ev, cls) => `class="${cls.join(" ")}" data-k="${ev.k ?? ""}" style="--ev:${eventColor(ev)}" ` +
+  // 할일(노트의 날짜 붙은 체크박스): 앞에 체크 네모, 완료면 취소선 (ev.task = {sp, note, line, raw, done})
+  const taskBox = (ev) => (ev.task ? `<span class="ev-check${ev.task.done ? " on" : ""}"></span>` : "");
+  const evAttrs = (ev, cls) => `class="${cls.join(" ")}${ev.task ? " task" + (ev.task.done ? " done" : "") : ""}" data-k="${ev.k ?? ""}" style="--ev:${eventColor(ev)}" ` +
     `title="${esc((ev.spaceMarks ? `[${ev.spaceMarks.map((m) => m.name).join(" · ")}] ` : "") + eventTip(ev))}"`;
 
   /** 노트 위 일정 줄용 칩 (시간·장소까지) */
@@ -96,7 +102,7 @@
     if (ev.uncertain) cls.push("unsure");
     const time = ev.time ? `<span class="ev-time">${esc(timeText(ev))}</span>` : "";
     const place = ev.place ? `<span class="ev-place">· ${esc(ev.place)}</span>` : "";
-    return `<span ${evAttrs(ev, cls)}>${time}${flag(ev)}${esc(ev.title)}${place}</span>`;
+    return `<span ${evAttrs(ev, cls)}>${taskBox(ev)}${time}${flag(ev)}${esc(ev.title)}${place}</span>`;
   }
 
   const FLAG = '<svg class="ev-flag" viewBox="0 0 12 12"><path d="M2.5 1v10.5M2.5 1.5h7l-1.8 2.75L9.5 7h-7"/></svg>';
@@ -115,7 +121,7 @@
     if (ev.important) cls.push("important");
     if (ev.holiday) cls.push("holiday");
     if (ev.uncertain) cls.push("unsure");
-    return `<span ${evAttrs(ev, cls)}>${time}${flag(ev)}${esc(ev.title)}</span>`;
+    return `<span ${evAttrs(ev, cls)}>${taskBox(ev)}${time}${flag(ev)}${esc(ev.title)}</span>`;
   }
 
   /**
@@ -135,7 +141,7 @@
     if (fadeOut) cls.push("fade-out");
     const cut = (head ? 5 : 0) + (tail ? 5 : 0);
     const style = `width:calc(${n} * 100% + ${n - 1} * var(--cal-gap) - ${cut}px);--n:${n}`;
-    let label = `<span class="bar-label">${esc(ev.title)}</span>`;
+    let label = `<span class="bar-label">${head ? taskBox(ev) : ""}${esc(ev.title)}</span>`;
     if (ev.italic) {
       label = (head && !fadeIn ? '<i class="ah l"></i>' : "") + '<i class="ln"></i>' + label +
         '<i class="ln"></i>' + (tail && !fadeOut ? '<i class="ah r"></i>' : "");
@@ -237,7 +243,8 @@
 
   /** 노트 위에 보여줄 그날 일정 줄 HTML (없으면 "") */
   function dayEvents(d, idx) {
-    const evs = (idx && idx.byDate[d]) || [];
+    // 그날 노트에 이미 있는 할일은 일정 줄에 또 띄우지 않음
+    const evs = ((idx && idx.byDate[d]) || []).filter((ev) => !(ev.task && ev.task.note === d));
     return evs.map(chip).join("");
   }
 

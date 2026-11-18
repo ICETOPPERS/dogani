@@ -121,14 +121,14 @@ html, body {
 .icon-btn:hover, .text-btn:hover { background: var(--bg-hover); }
 .text-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-/* 편집: #note-body 안의 CodeMirror 하나 (editor.js). 포커스 있을 때만 배경·테두리 */
+/* 편집: #note-body 안의 CodeMirror 하나 (editor.js). 포커스여도 배경 그대로 (노션처럼 커서만), 줄에 마우스 = 블록 강조 + ⋮⋮ 손잡이 */
 #note-body.has-editor { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 #note-body.has-editor > .empty { flex: none; }
 .lp-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .lp-host .cm-editor { flex: 1; min-height: 0; border-radius: 6px; }
-.lp-host .cm-editor.cm-focused { outline: none; background: var(--code-bg); box-shadow: inset 0 0 0 1px var(--accent); }
+.lp-host .cm-editor.cm-focused { outline: none; }
 #note-body .cm-scroller { font-family: inherit; line-height: 1.6; overflow-y: auto; }
-#note-body .cm-content { padding: 8px 16px 40px; caret-color: var(--text); }
+#note-body .cm-content { padding: 8px 16px 40px 30px; caret-color: var(--text); }
 #note-body .cm-line { padding: 0; }
 #note-body .cm-cursor { border-left-color: var(--text); }
 #note-body .cm-selectionBackground { background: color-mix(in srgb, var(--accent) 22%, transparent) !important; }
@@ -639,3 +639,24 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .ev-add-btns .danger { color: var(--sun); }
 .cal-day.range-sel { background: color-mix(in srgb, var(--accent) 18%, transparent); user-select: none; }
 .cal-grid { user-select: none; }
+
+/* 할일(노트의 날짜 붙은 체크박스)을 달력에 비춰 보임: 점선 테두리 + 체크 네모, 완료 = 취소선 */
+.ev.task { --bg: transparent; outline: 1px dashed color-mix(in srgb, var(--ev) 60%, transparent); outline-offset: -1px; }
+.ev.task.done { opacity: .5; text-decoration: line-through; }
+.ev-check {
+  display: inline-block; box-sizing: border-box; width: 9px; height: 9px; margin-right: 3px; vertical-align: -1px;
+  border: 1px solid currentColor; border-radius: 2px;
+}
+.ev-check.on { background: currentColor; }
+body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
+/* 줄(블록) 손잡이·강조·놓을 자리 (editor.js blockHandle, .cm-scroller 안 절대 위치) */
+.cm-block-hl { position: absolute; right: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 5%, transparent); pointer-events: none; }
+.cm-block-handle {
+  position: absolute; z-index: 5; width: 18px; height: 22px; display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; color: var(--text-muted); cursor: grab;
+}
+.cm-block-handle svg { width: 10px; height: 16px; fill: currentColor; }
+.cm-block-handle:hover { background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text); }
+.cm-block-handle:active { cursor: grabbing; }
+.cm-drop-mark { position: absolute; right: 8px; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+.cm-block-hl[hidden], .cm-block-handle[hidden], .cm-drop-mark[hidden] { display: none; }
