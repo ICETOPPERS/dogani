@@ -1444,6 +1444,15 @@
     markRange(r);
     evAdd.open(r[0], r[1], e.clientX, e.clientY);
   });
+  // 바탕화면 아이콘 등 바깥 파일을 창 위로 끌면 "+복사" 표시가 떠서 놓을 수 있는 것처럼 보임 → 받지 않는다고 알림
+  // (창 안 끌기는 types 에 Files 가 없어 영향 없음. 투명 창 아래 아이콘을 옮기다 걸리는 경우 대비)
+  const noFileDrop = (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
+    e.preventDefault();
+    if (e.type === "dragover") e.dataTransfer.dropEffect = "none";
+  };
+  window.addEventListener("dragover", noFileDrop, true);
+  window.addEventListener("drop", noFileDrop, true);
   // 할일 창 손잡이(⋮⋮)를 달력 칸에 끌어 놓기 = 그 할일 줄에 날짜를 붙임 (이미 기간이면 길이 유지)
   const grid = $("cal-grid");
   grid.addEventListener("dragover", (e) => {
@@ -1662,11 +1671,13 @@
       if (bridge) bridge.startMove();
     });
   }
-  $("resize-grip").addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    if (bridge) bridge.startResize();
-  });
+  for (const el of document.querySelectorAll(".rz")) {
+    el.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      if (bridge) bridge.startResize(+el.dataset.e);
+    });
+  }
   document.addEventListener("click", (e) => {
     const a = e.target.closest("a[href]");
     if (!a) return;

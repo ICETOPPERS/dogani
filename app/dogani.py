@@ -24,7 +24,7 @@ from urllib.parse import quote
 
 import pystray
 from PIL import Image, ImageDraw
-from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QObject, QPoint, QSize, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QBuffer, QByteArray, QFile, QIODevice, QObject, QPoint, QRect, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QCursor, QDesktopServices, QGuiApplication, QPalette, QRegion
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import (QWebEnginePage, QWebEngineProfile, QWebEngineScript,
@@ -506,9 +506,9 @@ class Bridge(QObject):
     def startMove(self):
         self.win.windowHandle().startSystemMove()
 
-    @Slot()
-    def startResize(self):
-        self.win.start_resize()
+    @Slot(int)
+    def startResize(self, edges):
+        self.win.start_resize(edges)
 
     @Slot(str, str)
     def setStatus(self, key, status):
@@ -553,11 +553,12 @@ class Bridge(QObject):
         QGuiApplication.clipboard().setText(text)
 
     @Slot(str)
-    def setCalDrag(self, on):
-        """할일 창에서 달력에 놓을 수 있는 줄(할일·장식) 끌기 시작/끝 → 달력 창에 알림 (달력 칸 강조 여부)"""
+    def setCalDrag(self, data):
+        """할일 창에서 달력에 놓을 수 있는 줄(할일·장식) 끌기 시작/끝 → 달력 창에 그 데이터 전달.
+        장식(일반 글자 줄)은 text/plain 에 원문만 실리므로 놓을 때 이 데이터가 필요함 (bool 로 넘기면 장식이 안 붙음)"""
         cal = self.win.app.panels.get("cal")
         if cal:
-            cal.call("setCalDrag", bool(on))
+            cal.call("setCalDrag", data or "")
 
     @Slot(str, str)
     def inviteFor(self, name, keys_json):
@@ -674,8 +675,8 @@ PANEL_MIN_SIZE = {"note": (300, 240), "cal": (340, 300)}
 
 class ResizeGhost(QWidget):
     """크기 조절 중에 보여주는 외곽선.
-    반투명 창 + 웹뷰는 크기가 바뀔 때마다 화면 전체를 다시 그려서 끌 때 버벅이므로,
-    끄는 동안은 이 선만 움직이고 마우스를 놓을 때 한 번만 실제 창 크기를 바꾼다."""
+    반투명 창 + 웹뷰는 크기가 바뀔 때마다 화면 전체를 다시 그려서 끌 때 버벅이므로
+    (Windows 기본 크기 조절도 마찬가지), 끄는 동안은 이 선만 움직이고 놓을 때 한 번만 실제 창을 바꾼다."""
 
     BORDER = 2
 
@@ -849,6 +850,7 @@ class Overlay(QWidget):
         pos = self.wcfg.get("pos")
         if pos and QGuiApplication.screenAt(QPoint(pos[0] + 30, pos[1] + 20)):
             self.move(pos[0], pos[1])
+            self.keep_on_screen()
             return
         # 처음 여는 창: 주 모니터 오른쪽 위. 할일 창은 맨 오른쪽, 달력 창은 그 왼쪽
         geo = QGuiApplication.primaryScreen().availableGeometry()
@@ -859,40 +861,45 @@ class Overlay(QWidget):
         self.keep_on_screen(self.pos())
 
     # -- size
-    def start_resize(self):
-        """오른쪽 아래 손잡이로 크기 조절 시작 (외곽선만 따라다님)"""
+    def start_resize(self, edges):
+        """가장자리 크기 조절 시작. edges = Qt.Edge 비트 (위1 왼2 오4 아래8, app.js .rz data-e)"""
         if getattr(self, "_ghost", None) is None:
             self._ghost = ResizeGhost()
             self._resize_timer = QTimer(self, interval=15, timeout=self._resize_tick)
-        self._resize_from = (QCursor.pos(), self.size())
-        self._resize_size = self.size()
-        self._ghost.setGeometry(self.geometry().adjusted(*self._margins()))
+        self._resize_from = (QCursor.pos(), self.geometry(), edges)
+        self._resize_geo = self.geometry()
+        self._ghost.setGeometry(self._resize_geo)
         self._ghost.show()
         self._resize_timer.start()
 
-    def _margins(self):
-        m = 10  # 그림자용 투명 여백 (style.css #root padding) 안쪽 = 보이는 창
-        return m, m, -m, -m
-
     def _resize_tick(self):
-        start, size = self._resize_from
+        start, geo, edges = self._resize_from
         d = QCursor.pos() - start
         mn = self.minimumSize()
-        w = max(mn.width(), size.width() + d.x(), 120)
-        h = max(mn.height(), size.height() + d.y(), 80)
-        self._resize_size = QSize(w, h)
-        geo = self.geometry()
-        geo.setSize(self._resize_size)
-        self._ghost.setGeometry(geo.adjusted(*self._margins()))
+        l, t, r, b = geo.left(), geo.top(), geo.right(), geo.bottom()
+        # 왼쪽·위를 끌면 반대쪽 끝은 고정, 최소 크기에서 멈춤
+        if edges & 2:
+            l = min(l + d.x(), r - mn.width() + 1)
+        if edges & 4:
+            r = max(r + d.x(), l + mn.width() - 1)
+        if edges & 1:
+            t = min(t + d.y(), b - mn.height() + 1)
+        if edges & 8:
+            b = max(b + d.y(), t + mn.height() - 1)
+        self._resize_geo = QRect(QPoint(l, t), QPoint(r, b))
+        self._ghost.setGeometry(self._resize_geo)
         if not ctypes.windll.user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000:
             self._resize_timer.stop()
             self._ghost.hide()
-            self.resize(self._resize_size)
+            self.setGeometry(self._resize_geo)
 
     def keep_on_screen(self, anchor=None):
         anchor = anchor if anchor is not None else self.pos()
         screen = QGuiApplication.screenAt(anchor + QPoint(30, 20)) or QGuiApplication.primaryScreen()
         geo = screen.availableGeometry()
+        # 큰 화면(RDP QHD 등)에서 키운 창이 작은 화면에서 아래·오른쪽이 잘려 가장자리를 못 잡지 않게 줄임
+        if self.width() > geo.width() or self.height() > geo.height():
+            self.resize(min(self.width(), geo.width()), min(self.height(), geo.height()))
         x = min(self.x(), geo.right() - self.width() + 1)
         y = min(self.y(), geo.bottom() - self.height() + 1)
         self.move(max(geo.left(), x), max(geo.top(), y))
@@ -966,6 +973,10 @@ class doganiApp(QObject):
         qapp.screenAdded.connect(self.on_screens_changed)
         qapp.screenRemoved.connect(self.on_screens_changed)
         qapp.primaryScreenChanged.connect(self.on_screens_changed)
+        # RDP 로 접속했다 로컬로 돌아오면 모니터는 그대로고 해상도만 바뀜 → 이것도 다시 맞춤
+        qapp.screenAdded.connect(self.watch_screen)
+        for s in qapp.screens():
+            self.watch_screen(s)
         setup_profile(self)
 
         self.share = ShareServer(cfg["port"], cfg["name"])
@@ -991,9 +1002,13 @@ class doganiApp(QObject):
         self.screens_changing = True
         self.screen_timer.start()
 
+    def watch_screen(self, screen):
+        screen.availableGeometryChanged.connect(self.on_screens_changed)
+
     def on_screens_settled(self):
         for ov in self.windows():
-            ov.place_on_saved_screen()
+            if not ov.place_on_saved_screen():
+                ov.keep_on_screen()
         self.screens_changing = False
 
     def win_cfg(self, mode):

@@ -98,7 +98,11 @@
         </form>
       </div>
 
-      <div id="resize-grip" title="크기 조절"></div>
+      <!-- 가장자리 크기 조절 (네 변·네 모서리). data-e = Qt.Edge 비트: 위1 왼2 오4 아래8 -->
+      <div class="rz" data-e="1"></div><div class="rz" data-e="8"></div>
+      <div class="rz" data-e="2"></div><div class="rz" data-e="4"></div>
+      <div class="rz" data-e="3"></div><div class="rz" data-e="5"></div>
+      <div class="rz" data-e="10"></div><div class="rz" data-e="12"></div>
     </section>
   </div>
 
