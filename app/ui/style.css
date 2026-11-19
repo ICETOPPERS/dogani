@@ -1,6 +1,7 @@
 /* ------------------------------------------------------------ theme */
 /* 색 칩·일정 블록 공용, 테마 무관 (DESIGN.md) */
-:root { --tint-bg: 28%; --tint-fg: 55%; --tint-line: 75%; --tint-radius: 4px; }
+/* --row-h: 달력 한 줄(일정·장식·근태·기간 띠) 공통 높이 → 한 덩어리로 보이게 */
+:root { --row-h: calc(15px * var(--fz, 1)); --tint-bg: 28%; --tint-fg: 55%; --tint-line: 75%; --tint-radius: 4px; }
 /* 클릭 시 깨어나기 옵션: 잠듦이면 창 배경 알파에 --bg-sleep 배 */
 body { --bg-sleep: .3; --bg-k: 1; }
 body.asleep { --bg-k: var(--bg-sleep); }
@@ -138,7 +139,10 @@ html, body {
 #note-body .cm-line { padding: 0; }
 #note-body .cm-cursor { border-left-color: var(--text); }
 #note-body .cm-selectionBackground { background: color-mix(in srgb, var(--accent) 22%, transparent) !important; }
-body.writable .lp-host .cm-content { cursor: text; }
+/* 왼쪽 여백(줄 손잡이 자리) = 손잡이와 같은 손 커서 → 손잡이·줄 사이를 오가도 손↔화살표 안 바뀜. 글자 줄만 I */
+body.writable .lp-host .cm-content { cursor: pointer; }
+/* I 커서는 글자 줄에만: 왼쪽 여백(줄 손잡이 자리)에선 화살표 → 손잡이로 오갈 때 I↔손 깜빡임 없음 */
+body.writable .lp-host .cm-line { cursor: text; }
 body.writable .task-checkbox { cursor: pointer; }
 
 .progress-row {
@@ -409,11 +413,11 @@ body.writable .cm-table-widget { cursor: text; }
 .cal-day .head .num { flex: none; }
 .cal-day .slot {
   flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  font-size: calc(9.5px * var(--fz, 1)); line-height: calc(14px * var(--fz, 1)); font-weight: 600; color: var(--sun);
+  font-size: calc(9.5px * var(--fz, 1)); line-height: var(--row-h); font-weight: 600; color: var(--sun);
 }
 .cal-day .slot > * + *::before { content: " · "; color: var(--sun); text-decoration: none; display: inline; }
-.cal-day .slot > .ev { display: inline; padding: 0; margin: 0; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; }
-.cal-day .slot > .ev:hover { text-decoration: underline; }
+/* 날짜 옆 근태 = 일정 블록과 같은 높이·여백·모서리 (한 덩어리로 보이게). vertical-align: top = 날짜 숫자와 가운데 맞춤 */
+.cal-day .slot > .ev { display: inline-block; vertical-align: top; padding: 0 4px; margin: 0; background: none; border: 0; border-radius: 4px; font: inherit; line-height: var(--row-h); color: inherit; cursor: pointer; }   /* line-height 는 font 뒤 (font 가 되돌림) */
 .cal-day .slot > .leave { opacity: .85; font-weight: 500; }
 .cal-day .slot > .cancel { text-decoration: line-through; opacity: .5; }
 .cal-day .count {
@@ -469,15 +473,38 @@ body.writable .cm-table-widget { cursor: text; }
 .cal-day .singles { flex: 1 1 0; min-height: 0; overflow: hidden; }  /* 남는 자리만, 넘치면 +N */
 /* 기간 띠: 칸 바닥(셀 안쪽 패딩·evs 여백까지 무시)에 붙임, 띠끼리 간격 0 */
 .cal-day .lanes { flex: none; margin-top: auto; margin-bottom: -6px; gap: 0; }
-.cal-day .lanes .ev { font-size: calc(9.5px * var(--fz, 1)); line-height: calc(14px * var(--fz, 1)); }
-.cal-day .lanes .ev.spacer { height: calc(14px * var(--fz, 1)); }
+.cal-day .lanes .ev { font-size: calc(9.5px * var(--fz, 1)); line-height: var(--row-h); }
+.cal-day .lanes .ev.spacer { height: var(--row-h); }
 .cal-day .ev { margin: 0 5px; }
-/* 장식(일정 파일 "✦" 줄): 한 단계 작은 연한 글자, 접지 않음. 우클릭 = 삭제 버튼 */
+/* 장식(일정 파일 "✦" 줄): 글자만 한 단계 작고 연함. 줄 높이·여백·간격은 일정 블록과 똑같이. 우클릭 = 삭제 버튼 */
 .cal-day .deco {
-  flex: none; margin: 0 6px;
-  font-size: calc(9.5px * var(--fz, 1)); line-height: 1.3;  /* 일정(10.5px)보다 한 단계 작게 */ color: var(--text-muted); opacity: .75;
+  flex: none; margin: 0 5px;
+  font-size: calc(9.5px * var(--fz, 1)); line-height: var(--row-h); color: var(--text-muted); opacity: .75;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 0 4px; border-radius: 4px;
+  border-bottom: 1px solid transparent; background-clip: padding-box;   /* 일정 사이 간격과 같게 */
+  cursor: pointer;
 }
+/* 장식 마우스 올림 = 일정과 같은 테두리 (평소엔 없음) */
+body.writable .cal-day .deco:hover { outline: 1px solid var(--border); outline-offset: -1px; }
+/* 투명(잠듦)일 때 바탕 없는 글자에도 밑판을 옅게 깔아 읽히게: 장식·할일 = 칩 밑판, 근태 = 붉은 밑판, 화살표 기간 = 가운데 제목만 */
+body.asleep .cal-day .deco, body.asleep .cal-day .singles > .ev.task, body.asleep .cal-day .ev.ev-timed {
+  background: color-mix(in srgb, var(--tint-base) 55%, transparent);   /* 일반 일정 밑판과 기간 띠 밑판의 중간 */
+  background-clip: padding-box;   /* background 단축 속성이 clip 을 되돌려 아래 1px 간격이 메워짐 → 일정 사이 간격 유지 */
+}
+/* 애매한 일정: 투명일 땐 통째 흐리게(.65) 하면 밑판까지 사라짐 → 덜 흐리게 */
+body.asleep .cal-day .ev.unsure { opacity: .85; }
+/* 화살표 가운데 제목 = 늘 같은 상자(여백·투명 테두리)라 투명해져도 글자가 안 움직임. 좌우 -3px = 띠의 gap 을 지워 선이 상자에 딱 닿게 */
+.cal-day .ev.arrow .bar-label { padding: 0 5px 0 3px; margin: 0 -3px; border: 1px solid transparent; border-radius: 4px; line-height: calc(var(--row-h) - 2px); }
+body.asleep .cal-day .ev.arrow .bar-label { border-color: var(--ev); }
+/* 근태: 붉은 기만 살짝, 밑판은 옅게 (진한 밑판은 투명 창에서 칙칙함) */
+body.asleep .cal-day .slot > * { background: color-mix(in srgb, var(--sun) 14%, color-mix(in srgb, var(--tint-base) 30%, transparent)); }
+/* 기간: 띠는 제 색을 옅게 비치게 (검은 밑판 대신 색 + 투명), 화살표는 가운데 제목만 같은 색으로 */
+body.asleep .cal-day .lanes > .ev:not(.arrow) { --bg: color-mix(in srgb, var(--ev) 32%, color-mix(in srgb, var(--tint-base) 25%, transparent)); }
+body.asleep .cal-day .ev.arrow .bar-label { background: color-mix(in srgb, var(--ev) 22%, color-mix(in srgb, var(--tint-base) 25%, transparent)); }
+/* 투명일 때 사이드바 칩은 바탕 없이 (조작하는 곳이 아니라 눈에 띌 필요 없음) */
+body.asleep .cal-tags .tag-chip { background: transparent !important; }
+.cal-day .deco.moving { opacity: .4; }
 /* 숨은 장식 표시: 숫자 없이 옅은 ✦ (일정 +N 보다 가볍게) */
 .cal-day .head > .deco-more { flex: none; line-height: calc(16px * var(--fz, 1)); font-size: calc(9px * var(--fz, 1)); color: var(--text-muted); opacity: .6; cursor: default; }
 #deco-menu {
@@ -526,6 +553,7 @@ body.writable .cm-table-widget { cursor: text; }
 .cal-day .ev.bar.tail { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
 .cal-day .ev.bar:not(.head) .bar-label { padding-left: 2px; }
 .cal-day .ev.bar:not(.head) .bar-label::before { content: "⋯ "; opacity: .6; }
+.cal-day .ev.bar.arrow:not(.head) .bar-label { padding-left: 3px; }   /* 기울임꼴은 글자가 오른쪽으로 기울어 왼쪽 여백이 커 보임 → 왼 3 · 오른 5 */
 /* *기울임* 기간: ◀── 제목 ──▶ (다음 주로 이어지면 화살촉 없이 선만) */
 .cal-day .ev.arrow {
   display: flex;
@@ -557,7 +585,8 @@ body.writable .cm-table-widget { cursor: text; }
 .ev.arrow .bar-label::before { content: none !important; }
 /* 일정 마우스오버 = 클릭(수정)·드래그(옮기기) 가능 표시 */
 /* 커서는 윈도우 기본만 (grab 은 Chromium 자체 그림이라 크기가 다름): 가장자리 = 좌우 크기 조절 */
-body.writable .cal-grid .ev[data-k] { cursor: default; }
+body.writable .cal-grid .ev[data-k] { cursor: pointer; }   /* 윈도우 기본 손 커서 (grab 은 크롬 자체 그림이라 이질감) */
+body.cal-grabbing, body.cal-grabbing * { cursor: move !important; }
 body.writable .cal-grid .ev[data-k].edge, body.cal-resizing, body.cal-resizing * { cursor: ew-resize !important; }
 body.cal-copying, body.cal-copying * { cursor: copy !important; }
 body.writable .cal-grid .ev[data-k]:hover { filter: brightness(1.25); outline: 1px solid var(--ev); outline-offset: -1px; }
@@ -657,7 +686,7 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 #cal-layout .lay-side { display: none; }
 .cal-side #cal-layout .lay-top { display: none; }
 .cal-side #cal-layout .lay-side { display: inline; }
-.cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; cursor: pointer; }
+.cal-spaces { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; cursor: pointer; }   /* 칩 사이 빈 곳도 손 커서 → 칩 사이를 오갈 때 화살표↔손 깜빡임 없음 */
 .cal-spaces[hidden] { display: none; }
 .cal-spaces label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .cal-spaces label { padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); }
@@ -773,7 +802,7 @@ body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
 .cm-block-hl { position: absolute; right: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 5%, transparent); pointer-events: none; }
 .cm-block-handle {
   position: absolute; z-index: 5; width: 16px; height: 18px; display: flex; align-items: center; justify-content: center;
-  border-radius: 4px; color: var(--text-muted); cursor: default;
+  border-radius: 4px; color: var(--text-muted); cursor: pointer;
 }
 .cm-block-handle svg { width: 8px; height: 13px; fill: currentColor; }
 .cm-block-handle:hover { color: var(--text); }

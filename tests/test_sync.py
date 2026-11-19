@@ -170,6 +170,15 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.host.groups()[0]["members"], [self.guest_id])
         self.assertTrue(self.host.can_write(self.host.owner_id))      # 관리자는 항상
 
+    def test_group_cards(self):
+        """사이드바 그룹 칩: /schedule 의 groups 에 구성원 이름과 실제 권한(개인 지정 반영)"""
+        rd = self.host.create_group("R&D", "read")
+        self.host.set_member_group(self.guest_id, rd, True)
+        self.host.set_perm(self.guest_id, "write")   # 개인 지정이 그룹보다 우선 → 미리보기도 편집
+        gs = self.guest.call("/schedule")[1]["groups"]
+        self.assertEqual(gs[0]["name"], "R&D")
+        self.assertEqual([(m["perm"]) for m in gs[0]["members"]], ["write"])
+
     def test_default_perm(self):
         """새 스페이스는 기본 보기만, 예전 team.json(키 없음)은 write. 그룹·개인 지정이 기본보다 우선"""
         self.assertEqual(self.fresh_default, "read")

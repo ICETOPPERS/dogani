@@ -33,6 +33,7 @@
     writable: false,
     myName: "",        // 설정의 내 이름 (멤버 칩의 "나")
     membersBySpace: {}, // 스페이스 키 → 팀원 이름 (/schedule 의 members, 멤버 칩 후보)
+    groupsBySpace: {},  // 스페이스 키 → 멤버 그룹 [{name, members: [{name, perm}]}] (사이드바 그룹 칩)
     calHidden: new Set(), // 달력·할일 일정에서 숨긴 스페이스 키 (설정 cal_hidden, 창끼리 같이 씀)
     evBySpace: {},     // 스페이스 키 → /schedule 일정 목록
     tasksBySpace: {},  // 스페이스 키 → /schedule 의 날짜 붙은 할일 (개인 스페이스만 옴)
@@ -181,6 +182,7 @@
       state.tasksBySpace[sp.key] = res.tasks || [];
       state.decoBySpace[sp.key] = res.decos || [];
       if (res.members) state.membersBySpace[sp.key] = res.members;
+      state.groupsBySpace[sp.key] = res.groups || [];
       const ro = res.writable === false;
       if (ro !== state.roSpaces.has(sp.key)) {
         if (ro) state.roSpaces.add(sp.key); else state.roSpaces.delete(sp.key);
@@ -323,15 +325,31 @@
     }
     return out;
   }
+  /** 모든 스페이스의 멤버 그룹 (같은 이름은 구성원을 합침) → {이름: [{name, perm}]} */
+  function allGroups() {
+    const out = {};
+    for (const gs of Object.values(state.groupsBySpace)) for (const g of gs) {
+      const k = cleanName(g.name), list = out[k] || (out[k] = []);
+      for (const m of g.members) if (!list.some((x) => x.name === m.name)) list.push(m);
+    }
+    return out;
+  }
+  /** 그룹 칩 미리보기 (윈도우 기본 툴팁): 구성원과 권한 한 줄씩 */
+  const groupTip = (name, ms) => `@${name}\n` + (ms.length ? ms.map((m) => `${m.name} · ${m.perm === "read" ? "보기만" : "편집"}`).join("\n") : "구성원이 없습니다.");
+  const GROUP_ICON = '<svg class="person-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.5" cy="5" r="2.5"/><circle cx="11" cy="5.5" r="2.2"/><path d="M0.5 14.5c0-2.9 2.2-4.8 5-4.8s5 1.9 5 4.8z"/><path d="M11.5 14.5c0-1.8-.6-3.3-1.7-4.3.4-.1.8-.2 1.2-.2 2.5 0 4.5 1.7 4.5 4.5z"/></svg>';
   const PERSON_ICON = '<svg class="person-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z"/></svg>';
   const meMark = (m) => (m === cleanName(state.myName) ? " (나)" : "");
   function renderMemberFilter() {
     const box = $("cal-members"), found = shownTags("members");
     // 스페이스 실제 멤버(나·팀원)를 앞에, 일정에만 적힌 이름은 뒤에
-    const real = [state.myName, ...teamNames()].map(cleanName).filter((n, i, a) => n && a.indexOf(n) === i);
-    const ms = [...real.filter((n) => found.includes(n)), ...found.filter((n) => !real.includes(n))];
-    box.hidden = !ms.length && !state.calHidden.has(NO_MEMBER);
-    box.innerHTML = ms.map((m) => `<label${real.includes(m) ? ' class="mem-real"' : ""}><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
+    // 멤버 그룹은 사람 칩과 따로: 사람 뒤에 그룹 아이콘 칩 (일정에 안 적혀도 늘 보임), all 은 칩 없음
+    const groups = allGroups(), isGroup = (n) => n in groups || n.toLowerCase() === "all";
+    const real = [state.myName, ...teamNames()].map(cleanName).filter((n, i, a) => n && a.indexOf(n) === i && !isGroup(n));
+    const ms = [...real.filter((n) => found.includes(n)), ...found.filter((n) => !real.includes(n) && !isGroup(n))];
+    const gs = Object.keys(groups).sort();
+    box.hidden = !ms.length && !gs.length && !state.calHidden.has(NO_MEMBER);
+    box.innerHTML = gs.map((g) => `<label class="mem-real mem-group" title="${esc(groupTip(g, groups[g]))}"><input type="checkbox" data-mem="${esc(g)}"${state.calHidden.has("@" + g) ? "" : " checked"}>` +
+      `${GROUP_ICON}<span class="chip-t">${esc(g)}</span></label>`).join("") + ms.map((m) => `<label${real.includes(m) ? ' class="mem-real"' : ""}><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
       `${PERSON_ICON}<span class="chip-t" title="${esc(m)}">${esc(m)}${meMark(m)}</span></label>`).join("") +
       `<label class="no-tag"><input type="checkbox" data-mem=""${state.calHidden.has(NO_MEMBER) ? "" : " checked"}>멤버 없는 일정</label>`;
   }
@@ -1364,6 +1382,7 @@
       if (mode !== "move") document.body.classList.add("cal-resizing");
       // 완료한 할일(✅ 날)은 완료한 날에 고정: 끌어서 옮기지 않음 (클릭·체크 해제는 됨)
       if (c && !(ev.task && ev.task.plan)) move = { ev, el: evEl, mode, from: c.dataset.date, to: c.dataset.date };
+      if (move && mode === "move") document.body.classList.add("cal-grabbing");   // 끄는 동안 쥔 손 커서
       return;
     }
     const deco = e.target.closest(".deco");
@@ -1371,6 +1390,14 @@
       e.stopPropagation();
       if (!canEdit({ spaces: [deco.dataset.sp] })) return;
       decoMenu(deco, e.clientX, e.clientY);
+      return;
+    }
+    if (deco && e.button === 0) {   // 장식 왼쪽 끌기 = 다른 날짜로 옮기기 (일정 옮기기와 같은 move 흐름)
+      const c = canEdit({ spaces: [deco.dataset.sp] }) && cellAt(e.clientX, e.clientY);
+      if (c) {
+        move = { deco, el: deco, mode: "move", from: c.dataset.date, to: c.dataset.date };
+        document.body.classList.add("cal-grabbing");
+      }
       return;
     }
     if (ev && e.button === 2) {
@@ -1398,6 +1425,7 @@
     move.to = c.dataset.date;
     const n = dayDiff(move.from, move.to);
     move.el.classList.toggle("moving", n !== 0);
+    if (move.deco) return markRange(n ? [move.to, move.to] : null);
     document.body.classList.toggle("cal-copying", n !== 0 && move.mode === "move" && e.ctrlKey && !move.ev.task);
     markRange(n ? dragRange(move.ev, move.mode, n) : null);
   });
@@ -1413,10 +1441,22 @@
       move = null;
       cellRects = null;
       m.el.classList.remove("moving");
-      document.body.classList.remove("cal-resizing", "cal-copying");
+      document.body.classList.remove("cal-resizing", "cal-copying", "cal-grabbing");
       markRange(null);
       if (!n) return;  // 제자리 = 클릭 (수정 팝업은 click 에서)
       dragged = true;
+      if (m.deco) {
+        const sp = spaceByKey(m.deco.dataset.sp), raw = m.deco.dataset.raw;
+        if (!sp) return;
+        // 일정 파일 줄의 날짜만 바꿈 (형식은 schedule.py _DATE: 261119 또는 2026-11-19)
+        editSchedDoc(sp, (text) => {
+          const lines = text.split("\n"), i = lines.findIndex((l) => l.trim() === raw);
+          if (i < 0) throw new Error("일정 파일에서 이 줄을 찾지 못했습니다.");
+          lines[i] = lines[i].replace(/\d{4}-\d{2}-\d{2}|\d{6}/, yymmdd(m.to));
+          return lines.join("\n");
+        }).catch((err) => alert("장식을 옮기지 못했습니다.\n" + (err.message || err)));
+        return;
+      }
       if (m.ev.task) {
         const [s, en] = dragRange(m.ev, m.mode, n);
         editTask(m.ev.task, (l) => setTaskDates(l, s, en)).catch((err) => alert("옮기기 실패: " + (err.message || err)));
@@ -1713,6 +1753,12 @@
     configure(cfg) {
       // 클릭 시 깨어나기 옵션: 다른 프로그램을 쓰는 중 → asleep (배경만 옅게, 글자·선은 그대로. DESIGN.md)
       if ("awake" in cfg) document.body.classList.toggle("asleep", !cfg.awake);
+      if (cfg.awake === false) {   // 잠들면 클릭이 안 닿아 열린 편집이 떠 있는 채로 굳음 → 다 닫음
+        evAdd.close();
+        note.exit();
+        const m = $("deco-menu");
+        if (m) m.hidden = true;
+      }
       if (cfg.theme) {
         document.body.classList.toggle("theme-light", cfg.theme !== "dark");
         document.body.classList.toggle("theme-dark", cfg.theme === "dark");

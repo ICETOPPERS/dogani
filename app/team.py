@@ -109,7 +109,7 @@ def _key(name):
 def _taken(other):
     """_find_name 결과 → 이름 겹침 오류 문구 ("" = 그룹 이름·all)"""
     if other == "":
-        return TeamError("name_taken", "그룹 이름이나 all 은 팀원 이름으로 쓸 수 없습니다.", 409)
+        return TeamError("name_taken", "멤버 그룹 이름이나 all 은 팀원 이름으로 쓸 수 없습니다.", 409)
     return None
 
 
@@ -454,9 +454,9 @@ class TeamHost:
         """그룹 이름 검사 → 정리한 이름 (팀원 이름·다른 그룹·all 과 겹치면 TeamError)"""
         name = clean_name(name).replace(" ", "")   # @그룹 은 띄어쓰기 없이 한 단어
         if not name:
-            raise TeamError("bad_name", "그룹 이름을 입력해 주세요.")
+            raise TeamError("bad_name", "멤버 그룹 이름을 입력해 주세요.")
         if any(c in name for c in "@#,~"):
-            raise TeamError("bad_name", "그룹 이름에는 @ # , ~ 를 쓸 수 없습니다.")
+            raise TeamError("bad_name", "멤버 그룹 이름에는 @ # , ~ 를 쓸 수 없습니다.")
         other = self._find_name(name)
         if other is not None and not (gid and other == "" and self._find_group(name) == gid):
             raise TeamError("name_taken", f"'{name}' 은(는) 이미 쓰고 있는 이름입니다.", 409)
@@ -509,6 +509,16 @@ class TeamHost:
             else:
                 m.pop("groups", None)
             self._changed()
+
+    def group_cards(self):
+        """달력 사이드바 멤버 그룹 칩용: [{name, members: [{name, perm}]}] 이름순.
+        권한은 그룹 설정이 아니라 그 팀원의 실제 권한 (개인 지정이 우선이라 미리보기가 실제와 같게)"""
+        with self.lock:
+            ms = self.data["members"].values()
+            out = [{"name": g["name"],
+                    "members": [{"name": m["name"], "perm": self._perm(m)} for m in ms if gid in (m.get("groups") or ())]}
+                   for gid, g in self.data["groups"].items()]
+        return sorted(out, key=lambda g: g["name"].casefold())
 
     def groups(self):
         """[{id, name, perm, members: [팀원id]}] 이름순"""

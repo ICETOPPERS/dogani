@@ -549,7 +549,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable,
                                     "decos": team.with_authors(team.store.decorations()),
                                     "tasks": team.store.dated_tasks(),
-                                    "members": team.mention_names()})   # @멤버 칩 후보 (팀원·그룹·all)
+                                    "members": team.mention_names(),   # @멤버 칩 후보 (팀원·그룹·all)
+                                    "groups": team.group_cards()})     # 사이드바 멤버 그룹 칩 (구성원·권한 미리보기)
         # 팀원이 생긴 뒤부터 새로 쓰거나 고친 줄에 작성자 꼬리표 (혼자 쓰는 동안은 노트가 예전과 같음)
         stamp = None if team.solo else (lambda old, new: schedule.stamp(old, new, mid, team.member_ids()))
         self._space(method, path, qs, team.store, team.hub, writable=writable, stamp=stamp)
