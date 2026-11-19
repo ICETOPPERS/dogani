@@ -75,6 +75,8 @@ class SyncTest(unittest.TestCase):
         os.makedirs(root)
         os.makedirs(keys)
         self.host = team.TeamHost(root, keys, "주인")
+        self.fresh_default = self.host.default_perm
+        self.host.set_default_perm("write")   # 다른 시험은 팀원이 쓸 수 있는 예전 기본값으로
         self.share = ShareServer(free_port(), "주인")
         self.share.add_space(self.host)
         self.share.start()
@@ -148,6 +150,77 @@ class SyncTest(unittest.TestCase):
         d = self.guest.doc()
         self.assertEqual(self.guest.write(d["content"] + "x\n", d["mtime"])[0], 403)
         self.assertFalse(self.guest.call("/schedule")[1]["writable"])
+
+    # ------------------------------------------------------------ 그룹
+    def test_group_perm(self):
+        """그룹 권한: 개인 지정이 없으면 그룹을 따르고(하나라도 write 면 write), 개인 지정이 우선"""
+        rd, it = self.host.create_group("R&D", "read"), self.host.create_group("전산")
+        self.assertTrue(self.host.can_write(self.guest_id))           # 그룹 없음 = write
+        self.host.set_member_group(self.guest_id, rd, True)
+        self.assertFalse(self.host.can_write(self.guest_id))          # read 그룹만
+        d = self.guest.doc()
+        self.assertEqual(self.guest.write(d["content"] + "x\n", d["mtime"])[0], 403)
+        self.host.set_member_group(self.guest_id, it, True)
+        self.assertTrue(self.host.can_write(self.guest_id))           # write 그룹도 있음
+        self.host.set_perm(self.guest_id, "read")
+        self.assertFalse(self.host.can_write(self.guest_id))          # 개인 지정 우선
+        self.host.set_perm(self.guest_id, "auto")
+        self.host.delete_group(it)
+        self.assertFalse(self.host.can_write(self.guest_id))
+        self.assertEqual(self.host.groups()[0]["members"], [self.guest_id])
+        self.assertTrue(self.host.can_write(self.host.owner_id))      # 관리자는 항상
+
+    def test_default_perm(self):
+        """새 스페이스는 기본 보기만, 예전 team.json(키 없음)은 write. 그룹·개인 지정이 기본보다 우선"""
+        self.assertEqual(self.fresh_default, "read")
+        self.host.set_default_perm("read")
+        self.assertFalse(self.host.can_write(self.guest_id))
+        self.assertEqual(self.host.data["groups"][self.host.create_group("태그용")]["perm"], "read")   # 새 그룹 = 기본 권한
+        it = self.host.create_group("전산", "write")
+        self.host.set_member_group(self.guest_id, it, True)
+        self.assertTrue(self.host.can_write(self.guest_id))
+        self.host.set_member_group(self.guest_id, it, False)
+        self.host.set_default_perm("write")
+        self.assertTrue(self.host.can_write(self.guest_id))
+        self.host.data.pop("default_perm")   # 예전 파일 흉내
+        self.assertEqual(self.host.default_perm, "write")
+
+    def test_group_names(self):
+        """그룹 이름은 팀원 이름·all·다른 그룹과 겹치지 않고, 팀원도 그룹 이름으로 못 바꿈"""
+        gid = self.host.create_group("R&D")
+        for bad in ("동료", "ALL", "r&d", "R& D", "", "a@b"):
+            with self.assertRaises(team.TeamError):
+                self.host.create_group(bad)
+        self.host.rename_group(gid, "R&D")   # 제 이름 그대로는 됨
+        with self.assertRaises(team.TeamError):
+            self.host.update_profile(self.guest_id, "r&d")
+
+    def test_group_mention(self):
+        """@그룹 은 ~id 가 붙어 이름을 바꿔도 따라가고, @그룹·@all 은 reach 로 팀원 이름까지 펼침"""
+        gid = self.host.create_group("전산")
+        self.host.set_member_group(self.guest_id, gid, True)
+        d = self.guest.doc()
+        self.assertEqual(self.guest.write(d["content"] + "==261120==, 교육, @전산\n==261121==, 휴무, @all\n"
+                                          "==261122==, 반차, @주인\n", d["mtime"])[0], 200)
+        self.assertIn("@전산~" + gid, self.owner.doc()["content"])
+        self.host.rename_group(gid, "IT")
+        sch = self.guest.call("/schedule")[1]
+        evs = {e["title"]: e for e in sch["decos"] + sch["events"]}
+        self.assertEqual(evs["교육"]["members"], ["IT"])
+        self.assertEqual(evs["교육"]["reach"], ["동료"])
+        self.assertEqual(sorted(evs["휴무"]["reach"]), ["동료", "주인"])
+        self.assertNotIn("reach", evs["반차"])
+        self.assertIn("IT", sch["members"])
+        self.assertIn("all", sch["members"])
+
+    def test_reach_edge(self):
+        """지운 그룹 id 는 같은 이름 새 그룹으로, 'All' 이라는 예전 팀원 id 는 그 사람만"""
+        gid = self.host.create_group("전산")
+        self.host.set_member_group(self.guest_id, gid, True)
+        with self.host.lock:
+            self.assertEqual(self.host._reach(["전산"], ["deadbeef"]), ["동료"])
+            self.host.data["members"][self.guest_id]["name"] = "All"
+            self.assertIsNone(self.host._reach(["All"], [self.guest_id]))
 
     def test_kicked_guest(self):
         self.host.kick(self.guest_id)

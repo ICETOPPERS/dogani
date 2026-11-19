@@ -283,6 +283,11 @@ class FreshMenuIcon(pystray.Icon):
         return super()._on_notify(wparam, lparam)
 
 
+def amp(text):
+    """트레이 메뉴 글자: 윈도우 메뉴는 & 를 단축키 표시로 먹으므로 && 로 (R&D)"""
+    return str(text).replace("&", "&&")
+
+
 class Tray(QObject):
     """pystray 는 별도 스레드에서 돈다. 메뉴 클릭은 시그널로 Qt 메인 스레드에 넘긴다."""
 
@@ -318,21 +323,39 @@ class Tray(QObject):
                  Item("탐색기에서 보기", self.emit("open_dir", sid)),
                  Item("대상 폴더 변경하기...", self.emit("change_dir", sid)),
                  pystray.Menu.SEPARATOR]
+        groups = host.groups()
+        dro = host.default_perm == "read"
+        items.append(Item("기본 권한: 보기만", self.emit("default_perm", (sid, "write" if dro else "read")),
+                          checked=lambda _, dro=dro: dro))
+        items.append(Item("그룹", pystray.Menu(*self.group_menu(sid, groups))))
+        items.append(pystray.Menu.SEPARATOR)
         n = 0
         for m in host.members():
             n += 1
+            gsub = self.member_group_items(sid, m, groups)
+            tail = f"  [{', '.join(map(amp, m['groups']))}]" if m["groups"] else ""
             if m["admin"]:
-                items.append(Item(f"{n}  {m['name']} (나)", None, enabled=False))
+                items.append(Item(f"{n}  {m['name']} (나){tail}", pystray.Menu(*gsub) if gsub else None,
+                                  enabled=bool(gsub)))
                 continue
-            ro = m["perm"] == "read"
-            sub = [Item("편집 허용", self.emit("perm", (sid, m["id"], "write" if ro else "read")),
-                        checked=lambda _, ro=ro: not ro),
-                   Item("다시 초대", self.emit("reinvite", (sid, m["id"])))]
+            ps = m["perm_set"]
+            auto = "편집 허용" if m["perm"] == "write" else "보기만"
+            perm = [Item(f"{'그룹' if m['groups'] else '기본 권한'}을 따름 (지금: {auto})",
+                         self.emit("perm", (sid, m["id"], "auto")), checked=lambda _, ps=ps: ps == "auto", radio=True),
+                    Item("편집 허용", self.emit("perm", (sid, m["id"], "write")),
+                         checked=lambda _, ps=ps: ps == "write", radio=True),
+                    Item("보기만", self.emit("perm", (sid, m["id"], "read")),
+                         checked=lambda _, ps=ps: ps == "read", radio=True)]
+            sub = [Item("권한", pystray.Menu(*perm))]
+            if gsub:
+                sub.append(Item("그룹", pystray.Menu(*gsub)))
+            sub.append(Item("다시 초대", self.emit("reinvite", (sid, m["id"]))))
             sub += [Item(f"다시 초대 {i['code']} 지우기 ({self.left_text(i['left'])})",
                          self.emit("cancel_invite", (sid, i["code"])))
                     for i in invites if i.get("mid") == m["id"]]
             sub.append(Item("내보내기", self.emit("kick", (sid, m["id"]))))
-            items.append(Item(f"{n}  {m['name']}", pystray.Menu(*sub)))
+            ro = " (보기만)" if m["perm"] == "read" else ""
+            items.append(Item(f"{n}  {m['name']}{ro}{tail}", pystray.Menu(*sub)))
         for i in invites:
             if i.get("mid"):
                 continue
@@ -340,6 +363,28 @@ class Tray(QObject):
             items.append(Item(f"{n}  {i['code']} ({self.left_text(i['left'])})",
                               self.emit("ask_cancel_invite", (sid, i["code"]))))
         return items + [pystray.Menu.SEPARATOR, Item("스페이스 닫기", self.emit("close_space", sid))]
+
+    def group_menu(self, sid, groups):
+        """스페이스 > 그룹: 그룹마다 (편집 허용 · 이름 바꾸기 · 삭제) + 새 그룹"""
+        Item = pystray.MenuItem
+        items = []
+        for g in groups:
+            w = g["perm"] == "write"
+            sub = [Item("편집 허용", self.emit("group_perm", (sid, g["id"], "read" if w else "write")),
+                        checked=lambda _, w=w: w),
+                   Item("이름 바꾸기...", self.emit("rename_group", (sid, g["id"]))),
+                   Item("삭제", self.emit("delete_group", (sid, g["id"])))]
+            items.append(Item(f"@{amp(g['name'])} ({len(g['members'])}명)", pystray.Menu(*sub)))
+        if items:
+            items.append(pystray.Menu.SEPARATOR)
+        return items + [Item("새 그룹 만들기...", self.emit("create_group", sid))]
+
+    def member_group_items(self, sid, m, groups):
+        """팀원 > 그룹: 그룹마다 체크 (넣기·빼기)"""
+        Item = pystray.MenuItem
+        return [Item(amp(g["name"]), self.emit("member_group", (sid, m["id"], g["id"], g["id"] not in m["group_ids"])),
+                     checked=lambda _, on=g["id"] in m["group_ids"]: on)
+                for g in groups]
 
     def join_menu(self, sid):
         """다른 PC 스페이스: 연결 상태 · 호스트 주소 / 번호 슬롯(보기만) / 나가기"""
@@ -352,7 +397,8 @@ class Tray(QObject):
                  pystray.Menu.SEPARATOR]
         for n, m in enumerate(e.get("members") or [], 1):
             me = " (나)" if m.get("id") == e.get("mid") else ""
-            items.append(Item(f"{n}  {m.get('name', '')}{me}", None, enabled=False))
+            tail = f"  [{', '.join(map(amp, m['groups']))}]" if m.get("groups") else ""
+            items.append(Item(f"{n}  {m.get('name', '')}{me}{tail}", None, enabled=False))
         return items + [pystray.Menu.SEPARATOR, Item("스페이스에서 나가기", self.emit("leave_space", sid))]
 
     def space_list(self):
@@ -1617,6 +1663,28 @@ class doganiApp(QObject):
                 host.set_perm(*rest)
             except TeamError as e:
                 self.tray.notify(e.message)
+        elif name in ("create_group", "rename_group"):
+            old = next((g["name"] for g in host.groups() if rest and g["id"] == rest[0]), "")
+            label = ("새 그룹 이름을 입력해 주세요.\n일정에 @그룹이름 을 적으면 그룹 전원을 가리킵니다." if not rest
+                     else "그룹 이름을 입력해 주세요.")
+            text, ok = QInputDialog.getText(None, APP_NAME, label, text=old)
+            if not ok or not text.strip() or text.strip() == old:
+                return
+            try:
+                host.rename_group(rest[0], text) if rest else host.create_group(text)
+            except TeamError as e:
+                QMessageBox.warning(None, APP_NAME, f"그룹 이름을 저장하지 못했습니다.\n{e.message}")
+        elif name == "default_perm":
+            host.set_default_perm(*rest)
+        elif name == "group_perm":
+            host.set_group_perm(*rest)
+        elif name == "delete_group":
+            g = next((g for g in host.groups() if g["id"] == rest[0]), None)
+            if g and QMessageBox.question(None, APP_NAME, f"'{g['name']}' 그룹을 삭제할까요?\n"
+                                          "팀원은 스페이스에 그대로 남습니다.") == QMessageBox.StandardButton.Yes:
+                host.delete_group(rest[0])
+        elif name == "member_group":
+            host.set_member_group(*rest)
 
     def on_command(self, name, arg):
         cfg = self.cfg
@@ -1647,7 +1715,8 @@ class doganiApp(QObject):
             e = self.entry(arg)
             if e and e["kind"] == "local" and os.path.isdir(e["dir"]):
                 os.startfile(e["dir"])
-        elif name in ("new_invite", "reinvite", "copy_invite", "cancel_invite", "ask_cancel_invite", "kick", "perm"):
+        elif name in ("new_invite", "reinvite", "copy_invite", "cancel_invite", "ask_cancel_invite", "kick", "perm",
+                      "create_group", "rename_group", "group_perm", "default_perm", "delete_group", "member_group"):
             sid, *rest = arg if isinstance(arg, tuple) else (arg,)
             host = self.local_host(sid)
             if host:

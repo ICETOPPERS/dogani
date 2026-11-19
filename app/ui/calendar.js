@@ -40,11 +40,13 @@
    * 근태 (==날짜== 줄, 날짜 줄 자리에 표시, 일정 칸에는 안 그림):
    * 보는 사람마다 다름: "rest" = 멤버 없음(모두) 또는 멤버에 내가 있음 → 내 쉬는 날(빨간 칸·노트 이동 건너뜀),
    * "leave" = 남의 근태 → 날짜 옆 빨간 글자만. 아니면 ""
+   * reach = 팀스페이스가 @그룹·@all 을 팀원 이름으로 펼친 목록. @all 은 개인 스페이스에서도 모두
    */
   function offKind(ev, me) {
     if (!ev.holiday) return "";
-    const ms = ev.members || [];
-    return !ms.length || (me && ms.includes(me)) ? "rest" : "leave";
+    const ms = ev.reach || ev.members || [];
+    const all = ms.some((m) => String(m).toLowerCase() === "all");
+    return !ms.length || all || (me && ms.includes(me)) ? "rest" : "leave";
   }
 
   /**
