@@ -3,7 +3,7 @@
 
 - 스페이스 폴더(데일리 노트 YYMMDD 요일.md + 일정 파일)를 감시하다가 변경되면 SSE 로 창에 푸시
 - 스페이스 /api/s/<스페이스id>/* : 이 PC 에서 연 스페이스(폴더)마다 하나. 같은 PC(나)는 항상 주인,
-  다른 PC 는 그 스페이스의 팀원 토큰이 있어야 하고 쓰기는 perm=write 팀원만 (team.can_write).
+  다른 PC 는 그 스페이스의 팀원 토큰이 있어야 하고 쓰기는 권한이 write 인 팀원만 (team.can_write: 개인 지정 > 그룹).
   팀원이 없는 스페이스는 다른 PC 에 열리지 않음 (= 예전 개인 스페이스)
 - /api/join : 초대장 코드로 참여 (코드가 어느 스페이스 것인지 서버가 찾음), /api/me : 토큰으로 스페이스 찾기
 """
@@ -549,7 +549,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable,
                                     "decos": team.with_authors(team.store.decorations()),
                                     "tasks": team.store.dated_tasks(),
-                                    "members": [m["name"] for m in team.members()]})   # @멤버 칩 후보
+                                    "members": team.mention_names()})   # @멤버 칩 후보 (팀원·그룹·all)
         # 팀원이 생긴 뒤부터 새로 쓰거나 고친 줄에 작성자 꼬리표 (혼자 쓰는 동안은 노트가 예전과 같음)
         stamp = None if team.solo else (lambda old, new: schedule.stamp(old, new, mid, team.member_ids()))
         self._space(method, path, qs, team.store, team.hub, writable=writable, stamp=stamp)

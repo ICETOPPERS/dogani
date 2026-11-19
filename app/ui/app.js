@@ -308,7 +308,8 @@
   const NO_MEMBER = "@";
   const cleanName = (v) => String(v || "").replace(/[@#,，\s]/g, "");
   function memberShown(ev) {
-    const ms = ev.members || [];
+    // reach = @그룹·@all 을 펼친 팀원 이름 (팀스페이스): 그룹 일정도 그 그룹원 칩으로 보이고 숨겨짐
+    const ms = ev.reach ? [...(ev.members || []), ...ev.reach] : ev.members || [];
     return ms.length ? ms.some((m) => !state.calHidden.has("@" + m)) : !state.calHidden.has(NO_MEMBER);
   }
   /** 모든 스페이스 팀원 이름 (스페이스마다 따로 받아 합침) */

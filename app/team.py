@@ -13,7 +13,12 @@
   * 초대장 코드를 5번 틀리면 그 IP 는 1분 동안 참여 금지
   * 토큰 = 팀원ID.발급시각.Ed25519 서명. 서명 키(개인키)는 호스트 PC 에만 있고 호스트가 직접 검증
   * 내보내기 = 팀원 목록에서 삭제, 다시 초대로 참여 = min_iat 올림
-- 권한: 팀원마다 perm = write(기본) | read. 관리자는 항상 write. 서버가 요청마다 확인 (토큰엔 안 넣음 → 바꾸면 바로 반영)
+- 그룹: groups = {그룹id: {name, perm}}, 팀원 groups = [그룹id]. 한 사람이 여러 그룹에 들 수 있음.
+  일정의 @그룹 = 그 그룹 팀원 모두, @all = 팀원 모두 (근태·멤버 필터에서 펼침). 그룹 이름은 팀원 이름·all 과 겹치지 않음
+- 권한: 관리자는 항상 write. 팀원 perm 이 read|write 로 적혀 있으면 그것(개인 지정), 없으면 그룹을 따름
+  (그룹 중 하나라도 write 면 write, 그룹이 있는데 모두 read 면 read, 그룹이 없으면 스페이스 기본 권한 default_perm).
+  default_perm: 새로 만든 스페이스는 read (보기만으로 시작해 쓸 사람만 열어 줌), 키가 없는 예전 파일은 write (예전 동작 유지)
+  서버가 요청마다 확인 (토큰엔 안 넣음 → 바꾸면 바로 반영)
 - 작성자: 팀스페이스 일정 저장 때 새로 쓰거나 고친 줄 끝에 " ~작성id>수정id" 꼬리표 (schedule.stamp, 이름은 볼 때 team.json 에서)
 """
 import datetime as dt
@@ -33,6 +38,7 @@ FAIL_LIMIT = 5
 FAIL_LOCK = 60          # 초
 ONLINE_WINDOW = 75      # 마지막 신호가 이 안이면 접속 중 (클라이언트는 20초마다 보냄)
 NAME_MAX = 20
+ALL_NAME = "all"        # @all = 팀원 모두 (예약된 이름, casefold 로 비교)
 
 SCHEDULE_SEED = """# 팀 일정
 
@@ -95,6 +101,18 @@ def format_invite(code):
     return "-".join(code[i:i + 4] for i in range(0, len(code), 4))
 
 
+def _key(name):
+    """이름 비교용: 대소문자·띄어쓰기 무시 (달력은 @이름 의 띄어쓰기를 지우므로 '전 산' 과 '전산' 은 같은 @전산)"""
+    return "".join(str(name or "").split()).casefold()
+
+
+def _taken(other):
+    """_find_name 결과 → 이름 겹침 오류 문구 ("" = 그룹 이름·all)"""
+    if other == "":
+        return TeamError("name_taken", "그룹 이름이나 all 은 팀원 이름으로 쓸 수 없습니다.", 409)
+    return None
+
+
 def clean_name(name):
     name = " ".join(str(name or "").split())[:NAME_MAX]
     return name
@@ -143,11 +161,15 @@ class TeamHost:
     def _load(self):
         data = {**(space.read_json(self.path) or {}), **(space.read_json(self.key_path) or {})}
         data.setdefault("name", "팀스페이스")
+        if not os.path.exists(self.path):   # 새 스페이스만 보기만으로 시작 (예전 team.json 은 키가 없으면 write)
+            data["default_perm"] = "read"
         if "sign_key" not in data:   # 새 팀: 서명 키를 만들고 바로 저장
             data["sign_key"] = secrets.token_hex(32)
             data["_dirty"] = True
         data.setdefault("members", {})
         data.setdefault("invites", {})
+        if not isinstance(data.get("groups"), dict):   # 그룹 이전 버전·깨진 값
+            data["groups"] = {}
         return data
 
     def _save(self):
@@ -180,11 +202,18 @@ class TeamHost:
 
     # -- members
     def _find_name(self, name):
-        key = name.casefold()
+        """그 이름을 쓰는 팀원 id. 그룹 이름·all 이면 "" (@이름 이 겹치지 않게 팀원도 못 씀), 없으면 None"""
+        key = _key(name)
         for mid, m in self.data["members"].items():
-            if m["name"].casefold() == key:
+            if _key(m["name"]) == key:
                 return mid
+        if key == ALL_NAME or self._find_group(name):
+            return ""
         return None
+
+    def _find_group(self, name):
+        key = _key(name)
+        return next((gid for gid, g in self.data["groups"].items() if _key(g["name"]) == key), None)
 
     def _ensure_owner(self, name):
         """호스트 PC 주인은 초대장 없이 자동으로 관리자 팀원"""
@@ -193,7 +222,7 @@ class TeamHost:
                 if m.get("admin"):
                     return mid
             name = clean_name(name) or "관리자"
-            if self._find_name(name):
+            if self._find_name(name) is not None:
                 name += "(관리자)"
             mid = secrets.token_hex(4)
             self.data["members"][mid] = {"name": name, "admin": True, "min_iat": 0,
@@ -299,7 +328,10 @@ class TeamHost:
                 else:
                     if not name:
                         raise TeamError("bad_name", "이름이 비어 있습니다.")
-                    if self._find_name(name):
+                    other = self._find_name(name)
+                    if other == "":
+                        raise _taken(other)
+                    if other is not None:
                         raise TeamError("name_taken", f"'{name}' 은(는) 이미 팀에 있는 이름입니다. "
                                         "본인이면 관리자에게 '다시 초대'를 부탁하세요.", 409)
                     mid = secrets.token_hex(4)
@@ -354,7 +386,9 @@ class TeamHost:
                 if not name:
                     raise TeamError("bad_name", "이름을 입력하세요.")
                 other = self._find_name(name)
-                if other and other != mid:
+                if other == "":
+                    raise _taken(other)
+                if other is not None and other != mid:
                     raise TeamError("name_taken", "다른 팀원이 쓰는 이름입니다.", 409)
                 m["name"] = name
             self._save()
@@ -369,51 +403,181 @@ class TeamHost:
                 self._save()
 
     # -- 권한
+    def _perm(self, m):
+        """팀원 하나의 실제 권한 (lock 안에서 부름). 규칙은 파일 맨 위 docstring"""
+        if m.get("admin"):
+            return "write"
+        if m.get("perm") in ("read", "write"):
+            return m["perm"]
+        gs = [self.data["groups"][g] for g in m.get("groups") or () if g in self.data["groups"]]
+        if not gs:
+            return self.default_perm
+        return "write" if any(g.get("perm") != "read" for g in gs) else "read"
+
     def can_write(self, mid):
         with self.lock:
             m = self.data["members"].get(mid)
-            return bool(m) and (m.get("admin") or m.get("perm", "write") != "read")
+            return bool(m) and self._perm(m) == "write"
+
+    def _changed(self):
+        """권한·그룹이 바뀜 → 저장하고 팀원 화면이 /schedule 을 다시 받게 (쓰기 가능 여부·@그룹 펼침 갱신)"""
+        self._save()
+        self.hub.broadcast("schedule", {})
 
     def set_perm(self, mid, perm):
-        if perm not in ("read", "write"):
-            raise TeamError("bad_perm", "권한은 read 또는 write 입니다.")
+        """perm = read | write (개인 지정) | auto (그룹을 따름)"""
+        if perm not in ("read", "write", "auto"):
+            raise TeamError("bad_perm", "권한은 read, write, auto 중 하나입니다.")
         with self.lock:
             m = self.data["members"].get(mid)
             if not m or m.get("admin"):
                 return
-            if perm == "write":
+            if perm == "auto":
                 m.pop("perm", None)
             else:
-                m["perm"] = "read"
-            self._save()
-        self.hub.broadcast("schedule", {})   # 팀원 화면이 /schedule 을 다시 받으며 쓰기 가능 여부를 갱신
+                m["perm"] = perm
+            self._changed()
+
+    @property
+    def default_perm(self):
+        return "read" if self.data.get("default_perm") == "read" else "write"
+
+    def set_default_perm(self, perm):
+        if perm not in ("read", "write"):
+            raise TeamError("bad_perm", "권한은 read 또는 write 입니다.")
+        with self.lock:
+            self.data["default_perm"] = perm
+            self._changed()
+
+    # -- 그룹
+    def _group_name(self, name, gid=None):
+        """그룹 이름 검사 → 정리한 이름 (팀원 이름·다른 그룹·all 과 겹치면 TeamError)"""
+        name = clean_name(name).replace(" ", "")   # @그룹 은 띄어쓰기 없이 한 단어
+        if not name:
+            raise TeamError("bad_name", "그룹 이름을 입력해 주세요.")
+        if any(c in name for c in "@#,~"):
+            raise TeamError("bad_name", "그룹 이름에는 @ # , ~ 를 쓸 수 없습니다.")
+        other = self._find_name(name)
+        if other is not None and not (gid and other == "" and self._find_group(name) == gid):
+            raise TeamError("name_taken", f"'{name}' 은(는) 이미 쓰고 있는 이름입니다.", 409)
+        return name
+
+    def create_group(self, name, perm=None):
+        """perm 을 안 주면 스페이스 기본 권한 (태그용으로 묶었는데 편집이 열리지 않게)"""
+        with self.lock:
+            name = self._group_name(name)
+            gid = secrets.token_hex(4)
+            perm = perm or self.default_perm
+            self.data["groups"][gid] = {"name": name, "perm": "read" if perm == "read" else "write"}
+            self._changed()
+            return gid
+
+    def rename_group(self, gid, name):
+        with self.lock:
+            if gid in self.data["groups"]:
+                self.data["groups"][gid]["name"] = self._group_name(name, gid)
+                self._changed()
+
+    def set_group_perm(self, gid, perm):
+        if perm not in ("read", "write"):
+            raise TeamError("bad_perm", "권한은 read 또는 write 입니다.")
+        with self.lock:
+            g = self.data["groups"].get(gid)
+            if g:
+                g["perm"] = perm
+                self._changed()
+
+    def delete_group(self, gid):
+        """그룹 삭제 + 팀원 목록에서도 뺌 (일정에 적힌 @그룹~id 는 적힌 이름 그대로 남음)"""
+        with self.lock:
+            if self.data["groups"].pop(gid, None) is None:
+                return
+            for m in self.data["members"].values():
+                if gid in (m.get("groups") or ()):
+                    m["groups"] = [g for g in m["groups"] if g != gid]
+            self._changed()
+
+    def set_member_group(self, mid, gid, on):
+        """팀원을 그룹에 넣거나(on=True) 뺌. 관리자도 그룹에 들 수 있음 (@그룹 대상)"""
+        with self.lock:
+            m = self.data["members"].get(mid)
+            if not m or gid not in self.data["groups"]:
+                return
+            gs = [g for g in m.get("groups") or () if g != gid] + ([gid] if on else [])
+            if gs:
+                m["groups"] = gs
+            else:
+                m.pop("groups", None)
+            self._changed()
+
+    def groups(self):
+        """[{id, name, perm, members: [팀원id]}] 이름순"""
+        with self.lock:
+            out = [{"id": gid, "name": g["name"], "perm": g.get("perm", "write"),
+                    "members": [mid for mid, m in self.data["members"].items() if gid in (m.get("groups") or ())]}
+                   for gid, g in self.data["groups"].items()]
+        return sorted(out, key=lambda g: g["name"].casefold())
 
     # -- 일정 작성자 (줄 끝 꼬리표 id → 이름)
     def with_authors(self, events):
-        """일정 목록에 작성·수정 팀원 이름(who) 붙이고, id 붙은 @멤버는 지금 이름으로. 꼬리표 없는 줄은 그대로"""
+        """일정 목록에 작성·수정 팀원 이름(who) 붙이고, id 붙은 @멤버·@그룹은 지금 이름으로. 꼬리표 없는 줄은 그대로.
+        @그룹·@all 이 있으면 reach = 가리키는 팀원 이름 모두 (근태 '내 쉬는 날' 판정용)"""
         with self.lock:
-            members = self.data["members"]
+            members, groups = self.data["members"], self.data["groups"]
             name = lambda i: (members.get(i) or {}).get("name", "(나간 팀원)") if i else ""
             out = []
             for ev in events:
                 if ev.get("by"):
                     ev = {**ev, "who": {"by": name(ev["by"]), "mod": name(ev.get("mod"))}}
-                if any(ev.get("member_ids") or ()):   # @이름~id → 지금 이름 (나간 팀원은 적힌 이름 그대로)
-                    ev = {**ev, "members": [(members.get(i) or {}).get("name", n)
+                if any(ev.get("member_ids") or ()):   # @이름~id → 지금 이름 (나간 팀원·지운 그룹은 적힌 이름 그대로)
+                    ev = {**ev, "members": [(members.get(i) or groups.get(i) or {}).get("name", n)
                                             for n, i in zip(ev["members"], ev["member_ids"])]}
+                reach = self._reach(ev.get("members") or (), ev.get("member_ids") or ())
+                if reach is not None:
+                    ev = {**ev, "reach": reach}
                 out.append(ev)
             return out
 
+    def _reach(self, names, ids):
+        """@그룹·@all 을 팀원 이름으로 펼친 목록 (lock 안에서 부름). 그룹·all 이 없으면 None"""
+        members, groups = self.data["members"], self.data["groups"]
+        out, wide = [], False
+        for n, i in zip(names, list(ids) + [""] * len(names)):
+            # 팀원 id 가 아니면 그룹: id 로, 없거나 지운 그룹 id 면 이름으로 (같은 이름으로 다시 만든 그룹)
+            gid = None if i in members else (i if i in groups else self._find_group(n))
+            if _key(n) == ALL_NAME and i not in members:   # 예전에 'All' 이라는 팀원이 있었으면 그 사람
+                hit = [m["name"] for m in members.values()]
+            elif gid:
+                hit = [m["name"] for m in members.values() if gid in (m.get("groups") or ())]
+            else:
+                out.append(n)
+                continue
+            wide = True
+            out += hit
+        return list(dict.fromkeys(out)) if wide else None
+
     def member_ids(self):
-        """{이름.casefold(): 팀원id}: 일정 저장 때 @이름 에 ~id 붙이기용 (schedule.stamp)"""
+        """{이름.casefold(): 팀원id·그룹id}: 일정 저장 때 @이름·@그룹 에 ~id 붙이기용 (schedule.stamp).
+        id 를 붙여 두면 그룹 이름을 바꿔도 일정이 따라감. @all 은 붙이지 않음"""
         with self.lock:
-            return {m["name"].casefold(): mid for mid, m in self.data["members"].items()}
+            ids = {g["name"].casefold(): gid for gid, g in self.data["groups"].items()}
+            ids.update({m["name"].casefold(): mid for mid, m in self.data["members"].items()})
+            return ids
+
+    def mention_names(self):
+        """@ 칩 후보: 팀원 이름 + 그룹 이름 + all"""
+        with self.lock:
+            return ([m["name"] for m in self.data["members"].values()] +
+                    sorted(g["name"] for g in self.data["groups"].values()) + [ALL_NAME])
 
     def members(self):
         now = time.time()
         with self.lock:
+            groups = self.data["groups"]
             out = [{"id": mid, "name": m["name"], "addr": m.get("addr", ""), "admin": bool(m.get("admin")),
-                    "perm": "write" if m.get("admin") else m.get("perm", "write"),
+                    "perm": self._perm(m), "perm_set": m.get("perm", "auto") if not m.get("admin") else "write",
+                    "groups": [groups[g]["name"] for g in m.get("groups") or () if g in groups],
+                    "group_ids": [g for g in m.get("groups") or () if g in groups],
                     "min_iat": m.get("min_iat", 0),
                     "online": now - m.get("last_seen", 0) < ONLINE_WINDOW or bool(m.get("admin")),
                     "last_seen": m.get("last_seen", 0)}
