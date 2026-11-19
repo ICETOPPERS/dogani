@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------ theme */
 /* 색 칩·일정 블록 공용, 테마 무관 (DESIGN.md) */
-:root { --tint-bg: 18%; --tint-fg: 80%; --tint-radius: 4px; }
+:root { --tint-bg: 28%; --tint-fg: 55%; --tint-line: 75%; --tint-radius: 4px; }
 /* 클릭 시 깨어나기 옵션: 잠듦이면 창 배경 알파에 --bg-sleep 배 */
 body { --bg-sleep: .3; --bg-k: 1; }
 body.asleep { --bg-k: var(--bg-sleep); }
@@ -10,6 +10,8 @@ body.asleep #panel { pointer-events: none; }
   --bg: rgba(255, 255, 255, calc(0.90 * var(--bg-k)));
   --bg-solid: rgb(255, 255, 255);   /* 정보 카드처럼 뒤 글자가 비치면 안 되는 곳 */
   --bg-hover: rgba(0, 0, 0, 0.06);
+  --tint-base: rgba(255, 255, 255, 0.80);   /* 색 칩 밑판: 바탕이 비쳐도 칩은 제 바탕을 가짐 */
+  --tint-ink: #000;                         /* 칩 글자 = 데이터 색에 이 색을 섞어 대비 확보 */
   --border: rgba(0, 0, 0, 0.12);
   --text: #222;
   --text-muted: #8a8a8a;
@@ -32,6 +34,8 @@ body.asleep #panel { pointer-events: none; }
   --bg: rgba(32, 32, 32, calc(0.88 * var(--bg-k)));
   --bg-solid: rgb(32, 32, 32);
   --bg-hover: rgba(255, 255, 255, 0.08);
+  --tint-base: rgba(20, 20, 20, 0.80);
+  --tint-ink: #fff;
   --border: rgba(255, 255, 255, 0.12);
   --text: #dadada;
   --text-muted: #8f8f8f;
@@ -499,14 +503,14 @@ body.writable .cm-table-widget { cursor: text; }
   line-height: calc(15px * var(--fz, 1));
   padding: 0 4px;
   border-radius: 4px;
-  color: color-mix(in srgb, var(--ev) var(--tint-fg), var(--text));
-  --bg: color-mix(in srgb, var(--ev) var(--tint-bg), transparent);
+  color: color-mix(in srgb, var(--ev) var(--tint-fg), var(--tint-ink));
+  --bg: color-mix(in srgb, var(--ev) var(--tint-bg), var(--tint-base));
   background: var(--bg);
 }
 .ev.important { font-weight: 700; }
 /* 중요 = 제목 앞 작은 깃발 (중요 메일 표시처럼) */
 .ev-flag { display: inline-block; width: .85em; height: .85em; margin-right: 2px; vertical-align: -.1em; fill: #e5484d; stroke: #e5484d; stroke-width: 1.3; stroke-linejoin: round; }
-.ev.holiday { --bg: color-mix(in srgb, var(--ev) 30%, transparent); }
+.ev.holiday { --bg: color-mix(in srgb, var(--ev) 38%, var(--tint-base)); }
 /* 10:00-10:30? 시간 미정: 옅게 */
 .ev.unsure { opacity: .65; }
 /* 기간 일정: 주마다 띠 하나 (시작 칸에서 여러 칸 너비로), 나머지 칸은 자리만 */
@@ -780,9 +784,9 @@ body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
 
 /* 색 칩 = 일정 블록과 같은 공식 (DESIGN.md 「색 칩」). --tc 하나만 주면 됨 */
 .tag-chip {
-  border: 1px solid color-mix(in srgb, var(--tc) 45%, transparent) !important; border-radius: 999px !important;
-  background: color-mix(in srgb, var(--tc) var(--tint-bg), transparent) !important;
-  color: color-mix(in srgb, var(--tc) var(--tint-fg), var(--text)) !important;
+  border: 1px solid color-mix(in srgb, var(--tc) var(--tint-line), transparent) !important; border-radius: 999px !important;
+  background: color-mix(in srgb, var(--tc) var(--tint-bg), var(--tint-base)) !important;
+  color: color-mix(in srgb, var(--tc) var(--tint-fg), var(--tint-ink)) !important;
 }
 .cal-tags label.tag-chip { padding: 2px 8px; }
 .cal-tags label.tag-chip:not(:has(input:checked)) { opacity: .35; }
