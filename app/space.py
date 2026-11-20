@@ -30,6 +30,37 @@ def read_json(path):
         return None
 
 
+BROKEN = []   # 이번 실행에 깨져서 백업한 파일 [(원래 경로, 백업 경로)] → 앱이 트레이 알림으로 알리고 비움
+
+
+def load_json(path):
+    """설정·팀 파일 읽기 → dict 또는 None. read_json 과 같되, 파일은 있는데 JSON 이 깨졌으면
+    .broken-<시각> 으로 옮겨 둔다. 기본값으로 덮어쓰기 전에 원본을 남겨 손으로 되살릴 수 있게."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except OSError:   # 없거나 잠깐 못 읽음 → 깨진 것이 아니므로 옮기지 않음
+        return None
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        return data
+    stamp = f"{path}.broken-{dt.datetime.now():%Y%m%d-%H%M%S}"
+    for n in range(1, 100):   # 같은 초에 또 깨져도 먼저 남긴 백업(진짜 원본)을 덮지 않게 rename (있으면 실패)
+        backup = stamp if n == 1 else f"{stamp}-{n}"
+        try:
+            os.rename(path, backup)
+            break
+        except FileExistsError:
+            continue
+        except OSError:
+            return None
+    else:
+        return None
+    BROKEN.append((path, backup))
+    return None
+
+
 def write_json(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -43,7 +74,7 @@ def open_space(root):
     if not root or not os.path.isdir(root):
         raise OSError(f"폴더가 없습니다: {root}")
     path = os.path.join(meta_dir(root), SPACE_FILE)
-    data = read_json(path) or {}
+    data = load_json(path) or {}
     if not re.fullmatch(r"[0-9a-f]{16}", str(data.get("id", ""))):   # 키 파일 이름에 쓰임 → 경로 문자 금지
         data = {"created": dt.datetime.now().isoformat(timespec="seconds"), **data, "id": secrets.token_hex(8)}
         write_json(path, data)

@@ -1,7 +1,7 @@
 """동기화 시나리오 시험: 실제 ShareServer 를 임시 폴더·빈 포트로 띄우고 HTTP 로 주인(이 PC)·팀원(다른 PC) 흉내.
 
 실행 (저장소 루트에서):  "C:\\Program Files\\Python313\\python.exe" -m unittest discover -s tests -v
-팀원 흉내: 같은 PC 요청은 모두 주인이라, 시험용 헤더 X-Test-Guest 가 있으면 주인이 아닌 것으로 봄 (이 파일 안에서만 바꿈)
+주인 흉내: 실제 앱처럼 주인 비밀값 헤더를 붙임. 팀원 흉내: 비밀값 없이 토큰만
 """
 import json
 import os
@@ -19,21 +19,9 @@ import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "app"))
 
 import server  # noqa: E402
+import space  # noqa: E402
 import team  # noqa: E402
-from server import CLIENT_KEY, KEY_HEADER, TOKEN_HEADER, Handler, ShareServer  # noqa: E402
-
-GUEST = "X-Test-Guest"
-_orig_check = Handler._check
-
-
-def _check(self):
-    ctx = _orig_check(self)
-    if ctx and self.headers.get(GUEST):
-        ctx.owner = False
-    return ctx
-
-
-Handler._check = _check
+from server import CLIENT_KEY, KEY_HEADER, OWNER_HEADER, TOKEN_HEADER, ShareServer  # noqa: E402
 
 
 def free_port():
@@ -43,15 +31,15 @@ def free_port():
 
 
 class Client:
-    def __init__(self, base, sid, token=None):
-        self.base, self.sid, self.token = base, sid, token
+    def __init__(self, base, sid, token=None, secret=""):
+        self.base, self.sid, self.token, self.secret = base, sid, token, secret
 
     def call(self, path, body=None, raw=False):
         h = {KEY_HEADER: CLIENT_KEY, "Content-Type": "application/json"}
-        if self.token is not None:
-            h[GUEST] = "1"
-            if self.token:
-                h[TOKEN_HEADER] = self.token
+        if self.secret:
+            h[OWNER_HEADER] = self.secret
+        if self.token:
+            h[TOKEN_HEADER] = self.token
         url = f"{self.base}/api/s/{self.sid}{path}" if not raw else self.base + path
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(url, data=data, headers=h, method="POST" if data else "GET")
@@ -81,7 +69,7 @@ class SyncTest(unittest.TestCase):
         self.share.add_space(self.host)
         self.share.start()
         self.base = f"http://127.0.0.1:{self.share.port}"
-        self.owner = Client(self.base, self.host.space_id)
+        self.owner = Client(self.base, self.host.space_id, secret=self.share.owner_secret)
         code = self.host.create_invite()
         st, res = Client(self.base, "", token="").call("/api/join", {"code": code, "name": "동료"}, raw=True)
         self.assertEqual(st, 200, res)
@@ -106,6 +94,42 @@ class SyncTest(unittest.TestCase):
     def test_no_token_rejected(self):
         st, _ = Client(self.base, self.host.space_id, token="").call("/sched-doc")
         self.assertEqual(st, 401)
+
+    # ------------------------------------------------------------ 주인 판정 (H1)
+    def test_loopback_without_secret_not_owner(self):
+        """같은 PC(루프백)여도 비밀값이 없거나 틀리면 주인이 아님"""
+        self.assertEqual(Client(self.base, self.host.space_id).call("/sched-doc")[0], 401)
+        self.assertEqual(Client(self.base, self.host.space_id, secret="x" * 43).call("/sched-doc")[0], 401)
+        self.assertEqual(self.owner.call("/sched-doc")[0], 200)
+
+    def test_lan_ip_never_owner(self):
+        """켤 때의 LAN IP 에서 온 요청은 비밀값이 맞아도 주인이 아님 (비밀값은 127.0.0.1 로만 감)"""
+        s = self.share
+        s.ip = "192.0.2.7"   # 망이 없는 PC 에선 local_ip() 가 127.0.0.1 이라 LAN IP 를 직접 정함
+        self.assertFalse(s.is_owner(s.ip, s.owner_secret))
+        self.assertFalse(s.is_owner("::ffff:127.0.0.1", ""))
+        self.assertTrue(s.is_owner("127.0.0.1", s.owner_secret))
+
+    def test_join_own_space_refused(self):
+        """내 서버 id 를 보낸 참여(내 LAN 주소로 내 초대장)·주인 비밀값을 단 참여는 거부, 초대장은 남음"""
+        code = self.host.create_invite()
+        guest = Client(self.base, "", token="")
+        st, res = guest.call("/api/join", {"code": code, "name": "나", "instance": self.share.instance_id}, raw=True)
+        self.assertEqual((st, res.get("error")), (400, "own_space"))
+        st, res = Client(self.base, "", secret=self.share.owner_secret).call(
+            "/api/join", {"code": code, "name": "나"}, raw=True)
+        self.assertEqual((st, res.get("error")), (400, "own_space"))
+        self.assertTrue(self.host.has_invite(code))
+        st, res = guest.call("/api/join", {"code": code, "name": "남", "instance": "0" * 16}, raw=True)
+        self.assertEqual(st, 200, res)
+
+    def test_join_gate_locks(self):
+        """틀린 초대장 FAIL_LIMIT 번 → 맞는 코드도 잠김 (제한은 JoinGate 한 곳)"""
+        guest = Client(self.base, "", token="")
+        for _ in range(team.FAIL_LIMIT):
+            self.assertEqual(guest.call("/api/join", {"code": "AAAA-AAAA-AAAA", "name": "x"}, raw=True)[0], 401)
+        code = self.host.create_invite()
+        self.assertEqual(guest.call("/api/join", {"code": code, "name": "y"}, raw=True)[0], 429)
 
     # ------------------------------------------------------------ 충돌
     def test_stale_write_conflict(self):
@@ -238,7 +262,7 @@ class SyncTest(unittest.TestCase):
     # ------------------------------------------------------------ 알림 (SSE)
     def test_sse_schedule_event(self):
         """주인이 저장하면 팀원 연결에 schedule 이벤트가 감"""
-        h = {KEY_HEADER: CLIENT_KEY, GUEST: "1", TOKEN_HEADER: self.guest.token}
+        h = {KEY_HEADER: CLIENT_KEY, TOKEN_HEADER: self.guest.token}
         req = urllib.request.Request(f"{self.base}/api/s/{self.host.space_id}/events", headers=h)
         got = threading.Event()
         def listen():
@@ -252,6 +276,53 @@ class SyncTest(unittest.TestCase):
         d = self.owner.doc()
         self.owner.write(d["content"] + "261124, 알림\n", d["mtime"])
         self.assertTrue(got.wait(3), "schedule 이벤트를 받지 못함")
+
+
+class BrokenFileTest(unittest.TestCase):
+    """깨진 설정·팀 파일은 기본값으로 덮어쓰기 전에 .broken-<시각> 으로 백업 (H2)"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="dogani-test-")
+        space.BROKEN.clear()
+
+    def tearDown(self):
+        space.BROKEN.clear()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def write(self, rel, text):
+        path = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def backups(self, path):
+        d, name = os.path.split(path)
+        return [n for n in os.listdir(d) if n.startswith(name + ".broken-")]
+
+    def test_load_json(self):
+        ok = self.write("ok.json", '{"a": 1}')
+        self.assertEqual(space.load_json(ok), {"a": 1})
+        self.assertIsNone(space.load_json(os.path.join(self.tmp, "none.json")))
+        for name, text in (("bad.json", '{"a": '), ("list.json", "[1, 2]")):
+            path = self.write(name, text)
+            self.assertIsNone(space.load_json(path))
+            self.assertFalse(os.path.exists(path))
+            self.assertEqual(len(self.backups(path)), 1)
+        self.assertEqual([os.path.basename(p) for p, _ in space.BROKEN], ["bad.json", "list.json"])
+        again = self.write("bad.json", "{")   # 같은 초에 또 깨져도 먼저 백업한 원본을 덮지 않음
+        space.load_json(again)
+        self.assertEqual(len(self.backups(again)), 2)
+
+    def test_broken_space_and_team(self):
+        root, keys = os.path.join(self.tmp, "space"), os.path.join(self.tmp, "keys")
+        os.makedirs(keys)
+        sp = self.write("space/.dogani/space.json", "{broken")
+        tj = self.write("space/.dogani/team.json", "{broken")
+        host = team.TeamHost(root, keys, "주인")
+        self.assertEqual(len(self.backups(sp)), 1)
+        self.assertEqual(len(self.backups(tj)), 1)
+        self.assertEqual(space.read_json(sp)["id"], host.space_id)   # 새 파일은 정상으로 다시 씀
 
 
 class TagRenameTest(unittest.TestCase):

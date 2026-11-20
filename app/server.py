@@ -8,10 +8,12 @@
 - /api/join : 초대장 코드로 참여 (코드가 어느 스페이스 것인지 서버가 찾음), /api/me : 토큰으로 스페이스 찾기
 """
 import datetime as dt
+import hmac
 import json
 import os
 import queue
 import re
+import secrets
 import socket
 import threading
 import time
@@ -42,6 +44,9 @@ def _web_origin(headers):
 HOST_HEADER = "X-dogani-Host"
 TOKEN_HEADER = "X-dogani-Token"   # 팀원 토큰 (team.py)
 USER_HEADER = "X-dogani-User"     # 표시 이름 (URL 인코딩)
+# 주인(이 PC 의 dogani) 비밀값: 켤 때마다 새로 만들어 메모리에만 둠. 127.0.0.1 로 가는 요청에만 붙임.
+# IP 로 주인을 가리면 IP 가 바뀐 뒤 그 IP 를 받은 PC·같은 PC 의 다른 사용자가 관리자가 되므로 비밀값으로 가림
+OWNER_HEADER = "X-dogani-Owner"
 CLIENT_KEY = "dogani-client-v1"
 TASK_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[(.)\]")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
@@ -436,7 +441,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers",
-                         f"{KEY_HEADER}, {HOST_HEADER}, {TOKEN_HEADER}, {USER_HEADER}, Content-Type")
+                         f"{KEY_HEADER}, {HOST_HEADER}, {TOKEN_HEADER}, {USER_HEADER}, {OWNER_HEADER}, Content-Type")
         self.end_headers()
 
     def _check(self):
@@ -448,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "client_only", "message": "dogani 로만 볼 수 있습니다."}, 403)
             return None
         share = self.share
-        owner = share.is_owner(ip)
+        owner = share.is_owner(ip, self.headers.get(OWNER_HEADER, ""))
         host = self.headers.get(HOST_HEADER, "")[:64]
         user = unquote(self.headers.get(USER_HEADER, ""))[:NAME_MAX]
         return Ctx(ip, host, owner, user, None)
@@ -496,13 +501,20 @@ class Handler(BaseHTTPRequestHandler):
         """초대장 코드 → 그 코드를 가진 스페이스에 참여 (코드는 60비트 무작위라 스페이스끼리 겹치지 않음)"""
         body = self._body()
         share = self.share
-        if ctx.owner:   # 내 스페이스에 내가 참여하면 팀원이 하나 더 생김 (초대장도 써 버림)
+        # 내 스페이스에 내가 참여하면 팀원이 하나 더 생김 (초대장도 써 버림).
+        # 내 LAN 주소로 보내면 비밀값이 안 붙으므로, 참여하는 쪽이 보낸 자기 서버 id 로도 가림
+        if ctx.owner or str(body.get("instance") or "") == share.instance_id:
             raise TeamError("own_space", "이 PC 의 스페이스입니다.")
         share.join_gate.check(ctx.ip)
         host = next((h for h in list(share.spaces.values()) if h.has_invite(body.get("code"))), None)
         if not host:
             share.join_gate.fail(ctx.ip)
-        res = host.join(ctx.ip, body.get("code"), body.get("name"))
+        try:
+            res = host.join(ctx.ip, body.get("code"), body.get("name"))
+        except TeamError as e:
+            if e.code == "bad_code":   # 확인한 사이 초대장이 만료·사용됨 → 틀린 횟수에 넣음
+                share.join_gate.fail(ctx.ip)
+            raise
         share.join_gate.ok(ctx.ip)
         res.update(pub=host.pub, team=host.name, space=host.space_id, pc=share.pc_name)
         self._send_json(res)
@@ -666,7 +678,9 @@ class ShareServer:
 
     def __init__(self, port, name=""):
         self.port = port
-        self.ip = local_ip()
+        self.ip = local_ip()   # 초대장 안내에 보이는 주소용 (주인 판정에는 쓰지 않음)
+        self.owner_secret = secrets.token_urlsafe(32)
+        self.instance_id = secrets.token_hex(8)   # 비밀 아님: 남이 알아도 '내 스페이스 참여 거부'만 가능
         self.pc_name = socket.gethostname()
         self.name = name or self.pc_name   # 표시 이름 (트레이 > 내 이름)
         self.spaces = {}          # 스페이스 id -> TeamHost (요청 스레드가 읽으므로 통째로 바꿔 끼움)
@@ -678,9 +692,9 @@ class ShareServer:
     def address(self):
         return f"{self.ip}:{self.port}"
 
-    def is_owner(self, ip):
-        """같은 PC 에서 온 요청 = 나 (모든 스페이스의 주인)."""
-        return ip in ("127.0.0.1", "::1", self.ip)
+    def is_owner(self, ip, secret):
+        """루프백 + 주인 비밀값이 맞는 요청 = 나 (모든 스페이스의 주인)."""
+        return ip in ("127.0.0.1", "::1") and hmac.compare_digest(str(secret).encode(), self.owner_secret.encode())
 
     def add_space(self, host):
         self.spaces = {**self.spaces, host.space_id: host}

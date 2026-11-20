@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDia
 import holidays
 import liveupdate
 import space
-from server import CLIENT_KEY, HOST_HEADER, KEY_HEADER, TOKEN_HEADER, USER_HEADER, ShareServer
+from server import CLIENT_KEY, HOST_HEADER, KEY_HEADER, OWNER_HEADER, TOKEN_HEADER, USER_HEADER, ShareServer
 from team import TeamError, TeamHost, clean_name, verify_hello
 
 APP_NAME = "dogani"
@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
 # ---------------------------------------------------------------- config
 def load_config():
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    cfg.update(space.read_json(CONFIG_PATH) or {})
+    cfg.update(space.load_json(CONFIG_PATH) or {})   # 깨졌으면 백업해 두고 기본값으로 (main 이 바로 저장함)
     # v26.11.17 이전: 네비게이션 바 + "dogani 표시"(전체 숨김) → 트레이에서 할일·달력 창을 하나씩 켬
     cfg["windows"].pop("nav", None)
     if cfg.pop("visible", True) is False:
@@ -684,6 +684,9 @@ class ClientHeaders(QWebEngineUrlRequestInterceptor):
             # 토큰은 그 스페이스의 호스트 주소·경로로 가는 요청에만 (다른 스페이스·다른 PC 로 새지 않게)
             url = info.requestUrl()
             addr, path = f"{url.host()}:{url.port()}".lower(), url.path()   # QUrl 은 호스트 이름을 소문자로 줌
+            share = getattr(self.app, "share", None)
+            if share and addr == f"127.0.0.1:{share.port}":   # 주인 비밀값은 이 PC 의 내 서버로만
+                info.setHttpHeader(OWNER_HEADER.encode(), share.owner_secret.encode())
             for e in cfg["spaces"]:
                 if (e["kind"] == "join" and e.get("id") and e["host"].lower() == addr
                         and path.startswith(f"/api/s/{e['id']}/")):
@@ -1161,6 +1164,8 @@ class doganiApp(QObject):
             host.rename_team(e.get("name") or os.path.basename(os.path.normpath(d)))
         e["id"] = host.space_id
         e["name"] = host.name   # 폴더가 없을 때 보일 이름
+        if hasattr(self, "tray"):   # 시작할 때 연 것은 start() 에서 한꺼번에 알림
+            self.report_broken()
         self.share.add_space(host)
         owner = next((m for m in host.members() if m["admin"]), None)
         if owner and owner["name"] != self.cfg["name"]:
@@ -1393,7 +1398,9 @@ class doganiApp(QObject):
             host = normalize_server(d.host.text())
             name = self.cfg["name"]
             while True:
-                status, res = http_json(host, "/api/join", {"code": d.code.text(), "name": name})
+                body = {"code": d.code.text(), "name": name,
+                        "instance": self.share.instance_id if self.share else ""}   # 내 서버면 거부하게
+                status, res = http_json(host, "/api/join", body)
                 if status != 409 or res.get("error") != "name_taken":
                     break
                 # 이름이 겹치면 그 자리에서 다른 이름을 물어 같은 초대장으로 다시 시도
@@ -1624,11 +1631,21 @@ class doganiApp(QObject):
                 self.show_panel(mode)
         self.team_timer.start()
         self.poll_team()
+        self.report_broken()
         if not self.share:
             self.tray.notify(f"포트 {self.cfg['port']}이(가) 사용 중이라 스페이스를 열 수 없습니다.\n"
                              "예전 버전 dogani 가 켜져 있다면 종료하고 다시 실행해 주세요.")
         elif not self.cfg["spaces"]:
             QTimer.singleShot(500, self.create_space)
+
+    def report_broken(self):
+        """깨져서 백업한 설정·팀 파일을 트레이 알림으로 알림 (space.load_json 이 모아 둔 것)"""
+        if not space.BROKEN:
+            return
+        names = ", ".join(os.path.basename(p) for p, _ in space.BROKEN)
+        space.BROKEN.clear()
+        self.tray.notify(f"{names} 파일이 깨져 있어 새로 만들었습니다.\n"
+                         "원래 파일은 같은 폴더에 .broken- 이름으로 백업해 두었습니다.")
 
     # ------------------------------------------------------------ actions
     def invite_for(self, name, keys):

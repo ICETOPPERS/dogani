@@ -145,7 +145,6 @@ class TeamHost:
         if self.data.pop("_dirty", False):   # 새 서명 키는 바로 저장 (안 그러면 재시작마다 키가 바뀜)
             self._save()
         self.pub = public_key(self.data["sign_key"])
-        self.fails = {}   # ip -> [횟수, 잠금 해제 시각]
         self.proofs = []  # 최근 호스트 확인 서명 시각 (prove 횟수 제한)
         if fresh:   # 빈 폴더에만 예시 일정 파일 (이미 쓰던 노트 폴더에는 파일을 만들지 않음)
             with open(os.path.join(root, "일정.md"), "w", encoding="utf-8") as f:
@@ -159,7 +158,7 @@ class TeamHost:
 
     # -- storage
     def _load(self):
-        data = {**(space.read_json(self.path) or {}), **(space.read_json(self.key_path) or {})}
+        data = {**(space.load_json(self.path) or {}), **(space.load_json(self.key_path) or {})}   # 깨졌으면 백업 후 새로
         data.setdefault("name", "팀스페이스")
         if not os.path.exists(self.path):   # 새 스페이스만 보기만으로 시작 (예전 team.json 은 키가 없으면 write)
             data["default_perm"] = "read"
@@ -247,19 +246,6 @@ class TeamHost:
             self.proofs.append(now)
         return ed25519.sign(bytes.fromhex(self.data["sign_key"]), HELLO_PREFIX + nonce.encode()).hex()
 
-    def _limit(self, ip):
-        f = self.fails.get(ip)
-        if f and f[0] >= FAIL_LIMIT and time.time() < f[1]:
-            raise TeamError("locked", f"여러 번 틀려서 {FAIL_LOCK}초 동안 잠겼습니다.", 429)
-
-    def _fail(self, ip, code, message):
-        f = self.fails.setdefault(ip, [0, 0])
-        if time.time() > f[1]:
-            f[0] = 0 if f[0] >= FAIL_LIMIT else f[0]
-        f[0] += 1
-        f[1] = time.time() + FAIL_LOCK
-        raise TeamError(code, message, 401)
-
     # -- invites
     def _purge(self):
         """만료된 초대장 정리 (lock 안에서 부름) → 바뀌었으면 True"""
@@ -307,8 +293,8 @@ class TeamHost:
         return sorted(out, key=lambda i: i["left"])
 
     def join(self, ip, code, name):
-        """초대장 코드 + 그 PC 의 '내 이름' → 토큰. 성공하면 초대장은 폐기 (이름이 겹치면 초대장은 남음)"""
-        self._limit(ip)
+        """초대장 코드 + 그 PC 의 '내 이름' → 토큰. 성공하면 초대장은 폐기 (이름이 겹치면 초대장은 남음)
+        틀린 횟수 제한은 server.JoinGate 가 IP 마다 함 (스페이스마다 따로 세면 여러 스페이스로 우회됨)"""
         code = normalize_invite(code)
         name = clean_name(name)
         with self.lock:
@@ -341,11 +327,10 @@ class TeamHost:
                     iat = None
                 self.data["invites"].pop(code, None)
                 self._save()
-                self.fails.pop(ip, None)
                 return self._session(mid, iat)
             if purged:
                 self._save()
-        self._fail(ip, "bad_code", "초대장 코드가 맞지 않거나 만료됐습니다. (15분 안에 한 번만 쓸 수 있음)")
+        raise TeamError("bad_code", "초대장 코드가 맞지 않거나 만료됐습니다.\n15분 안에 한 번만 쓸 수 있습니다.", 401)
 
     def _session(self, mid, iat=None):
         token = make_token(self.data["sign_key"], mid, iat)

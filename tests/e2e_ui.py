@@ -37,6 +37,7 @@ host = team.TeamHost(SPACE, KEYS, "t")
 def start_server():
     global srv
     srv = server.ShareServer(PORT, "t")
+    fake.share = srv   # 오버레이 요청에 주인 비밀값을 붙이게 (켤 때마다 바뀜)
     srv.add_space(host)
     for _ in range(50):
         try:
@@ -223,7 +224,8 @@ check("5 동시에 새 노트 → 둘 다 남음", f is not None and "A 할일" 
 import urllib.request, urllib.error
 def post(path, body):
     r = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/s/{host.space_id}{path}", data=json.dumps(body).encode(), method="POST",
-                               headers={server.KEY_HEADER: server.CLIENT_KEY, "Content-Type": "application/json"})
+                               headers={server.KEY_HEADER: server.CLIENT_KEY, server.OWNER_HEADER: srv.owner_secret,
+                                        "Content-Type": "application/json"})
     try:
         return urllib.request.urlopen(r).status
     except urllib.error.HTTPError as e:
