@@ -40,10 +40,13 @@
         <!-- 달력에 일정을 보일 스페이스 (체크 끄면 숨김, 할일 창 일정 줄도 같이) -->
         <div class="cal-filters">
           <div id="cal-spaces" class="cal-spaces" hidden></div>
-          <!-- 보이는 달에 쓴 태그 (끄면 그 태그 일정 숨김), 맨 끝 "태그 없는 일정" -->
-          <div id="cal-tags" class="cal-spaces cal-tags" hidden></div>
+          <!-- 아래 세 묶음: 사이드바에서 제목 클릭 = 접기, 제목 끌기 = 순서 바꾸기 (calendar.js initSections) -->
+          <!-- 스페이스의 멤버 그룹 (@그룹. 끄면 그 그룹 일정 숨김, 마우스 = 구성원·권한 카드) -->
+          <div class="cal-sec" data-sec="groups"><div class="cal-sec-h">멤버 그룹</div><div id="cal-groups" class="cal-spaces cal-tags" hidden></div></div>
           <!-- 보이는 달 일정의 @멤버 (끄면 그 멤버 일정 숨김), 맨 끝 "멤버 없는 일정" -->
-          <div id="cal-members" class="cal-spaces cal-tags" hidden></div>
+          <div class="cal-sec" data-sec="members"><div class="cal-sec-h">멤버</div><div id="cal-members" class="cal-spaces cal-tags" hidden></div></div>
+          <!-- 보이는 달에 쓴 태그 (끄면 그 태그 일정 숨김), 맨 끝 "태그 없는 일정" -->
+          <div class="cal-sec" data-sec="tags"><div class="cal-sec-h">태그</div><div id="cal-tags" class="cal-spaces cal-tags" hidden></div></div>
         </div>
         <div id="cal-grid" class="cal-grid"></div>
         </div>

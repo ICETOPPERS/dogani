@@ -330,8 +330,8 @@
       if (evs.length) {
         const more = document.createElement("span");
         more.className = "ev ev-more";
-        more.textContent = `+${evs.length}`;
-        more.title = evs.map((el) => el.dataset.tip).join("\n\n");
+        more.textContent = String(evs.length);
+        more.dataset.ks = evs.map((el) => el.dataset.k).filter(Boolean).join(",");   // 마우스 = 숨은 일정만 카드로 (app.js tipRender)
         at.after(more);
         at = more;
       }
@@ -372,6 +372,55 @@
       side = !side;
       apply(side);
       try { localStorage.setItem("dogani.calSide", side ? "1" : "0"); } catch (e2) {}
+    });
+  })();
+
+  // 사이드바 그룹·멤버·태그 묶음: 제목 클릭 = 접기, 제목 끌기 = 순서 바꾸기 (스페이스는 늘 맨 위). 이 PC 에만 기억
+  (function initSections() {
+    const box = document.querySelector("#view-cal .cal-filters");
+    if (!box) return;
+    const KEY = "dogani.calSecs";
+    const secs = () => Array.from(box.querySelectorAll(":scope > .cal-sec"));
+    const save = () => {
+      const v = { order: secs().map((s) => s.dataset.sec), folded: secs().filter((s) => s.classList.contains("folded")).map((s) => s.dataset.sec) };
+      try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {}
+    };
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
+    if (saved && Array.isArray(saved.order)) {
+      // 기억한 순서대로 맨 끝으로 옮김 → 모르는 묶음(새로 생긴 것)은 앞쪽에 남음
+      for (const k of saved.order) { const s = box.querySelector(`:scope > .cal-sec[data-sec="${k}"]`); if (s) box.appendChild(s); }
+    }
+    if (saved && Array.isArray(saved.folded)) for (const s of secs()) s.classList.toggle("folded", saved.folded.includes(s.dataset.sec));
+    // 제목 누르고 움직이면 그 묶음을 마우스 따라 위아래로 바로 옮김 (HTML5 끌기는 크롬 커서·그림이 떠서 안 씀). 안 움직이고 떼면 접기
+    box.addEventListener("mousedown", (e) => {
+      const h = e.button === 0 && e.target.closest && e.target.closest(".cal-sec-h");
+      if (!h) return;
+      e.preventDefault();
+      const sec = h.parentElement, y0 = e.clientY;
+      let moved = false;
+      const move = (ev) => {
+        if (!moved && Math.abs(ev.clientY - y0) < 4) return;
+        if (!moved) { moved = true; sec.classList.add("moving"); document.body.classList.add("cal-grabbing"); }
+        // 마우스가 다른 묶음의 가운데를 넘으면 자리를 바꿈
+        for (const o of secs()) {
+          if (o === sec) continue;
+          const r = o.getBoundingClientRect(), mid = r.top + r.height / 2;
+          const after = !!(sec.compareDocumentPosition(o) & Node.DOCUMENT_POSITION_FOLLOWING);
+          if (after && ev.clientY > mid) { box.insertBefore(sec, o.nextSibling); break; }
+          if (!after && ev.clientY < mid) { box.insertBefore(sec, o); break; }
+        }
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        sec.classList.remove("moving");
+        document.body.classList.remove("cal-grabbing");
+        if (!moved) sec.classList.toggle("folded");
+        save();
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
     });
   })();
 

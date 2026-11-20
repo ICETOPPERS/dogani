@@ -32,7 +32,7 @@ from PySide6.QtWebEngineCore import (QWebEnginePage, QWebEngineProfile, QWebEngi
                                       QWebEngineUrlSchemeHandler)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QInputDialog,
-                               QLabel, QLineEdit, QMessageBox, QVBoxLayout, QWidget)
+                               QLabel, QLineEdit, QMenu, QMessageBox, QVBoxLayout, QWidget)
 
 import holidays
 import liveupdate
@@ -614,6 +614,16 @@ class Bridge(QObject):
         except ValueError:
             return
         QTimer.singleShot(0, lambda: self.win.app.invite_for(name, keys))
+
+    @Slot(str, str)
+    def groupMenu(self, kind, name):
+        """달력 사이드바 우클릭: kind="member" = 그 멤버를 넣을 그룹 고르기, "group" = 그 그룹에 넣을 멤버 고르기"""
+        QTimer.singleShot(0, lambda: self.win.app.group_pick_menu(kind, name))
+
+    @Slot(str, str)
+    def addToGroup(self, name, group):
+        """달력 사이드바에서 멤버 칩을 그룹 칩에 끌어 놓음 → 그 그룹에 넣기"""
+        QTimer.singleShot(0, lambda: self.win.app.set_group_by_name(name, group, True))
 
     @Slot(int, result=str)
     def getHolidays(self, year):
@@ -1639,6 +1649,60 @@ class doganiApp(QObject):
                 return
             sid = next(h[0] for h in hosts if h[1] == label)
         self.space_command("new_invite", self.local_host(sid), [])
+
+    @staticmethod
+    def chip_name(v):
+        """달력 칩 이름과 같은 꼴 (JS cleanName: 공백·@·#·쉼표 뺌) — 칩에서 온 이름과 맞춰 보려고"""
+        return "".join(c for c in str(v or "") if not c.isspace() and c not in "@#,，").casefold()
+
+    def group_pairs(self):
+        """내 PC 스페이스마다 (host, 팀원 목록, 그룹 목록). 그룹 구성은 호스트(관리자)만 바꿀 수 있어 참여 스페이스는 뺌"""
+        out = []
+        for s in self.spaces():
+            host = s["kind"] == "me" and self.local_host(s["key"])
+            if host:
+                out.append((host, host.members(), host.groups()))
+        return out
+
+    def set_group_by_name(self, name, group, on):
+        """이름으로 멤버를 그룹에 넣거나 뺌. 같은 이름의 멤버·그룹이 함께 있는 내 PC 스페이스 모두에 적용"""
+        cn, name, group, done = self.chip_name, self.chip_name(name), self.chip_name(group), False
+        for host, ms, gs in self.group_pairs():
+            m = next((m for m in ms if cn(m["name"]) == name), None)
+            g = next((g for g in gs if cn(g["name"]) == group), None)
+            if m and g:
+                host.set_member_group(m["id"], g["id"], on)
+                done = True
+        if not done:
+            self.tray.notify("멤버 그룹을 바꾸지 못했습니다.\n내 PC 스페이스에 그 멤버와 멤버 그룹이 함께 있어야 합니다.")
+
+    def group_pick_menu(self, kind, name):
+        """마우스 자리에 체크 메뉴: 멤버 → 그룹들, 그룹 → 멤버들. 고르면 넣기·빼기 전환"""
+        rows, cn, key = {}, self.chip_name, self.chip_name(name)   # rows: 메뉴 글자 → 지금 들어 있음
+        for host, ms, gs in self.group_pairs():
+            if kind == "member":
+                m = next((m for m in ms if cn(m["name"]) == key), None)
+                for g in gs if m else ():
+                    rows[g["name"]] = rows.get(g["name"], False) or g["id"] in m["group_ids"]
+            else:
+                g = next((g for g in gs if cn(g["name"]) == key), None)
+                for m in ms if g else ():
+                    rows[m["name"]] = rows.get(m["name"], False) or g["id"] in m["group_ids"]
+        if not rows:
+            return self.tray.notify("멤버 그룹을 바꿀 수 있는 내 PC 스페이스가 없습니다." if kind == "member"
+                                    else "이 멤버 그룹에 넣을 수 있는 멤버가 없습니다.")
+        menu = QMenu()
+        title = menu.addAction(f"{name} 님을 넣을 멤버 그룹" if kind == "member" else f"@{name} 에 넣을 멤버")
+        title.setEnabled(False)
+        menu.addSeparator()
+        for label in sorted(rows, key=str.casefold):
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(rows[label])
+        act = menu.exec(QCursor.pos())
+        if act and act is not title:
+            m, g = (name, act.text()) if kind == "member" else (act.text(), name)
+            self.set_group_by_name(m, g, not rows[act.text()])
 
     def space_command(self, name, host, rest):
         """내 PC 스페이스의 초대장·팀원 명령 (트레이)"""

@@ -334,22 +334,24 @@
     }
     return out;
   }
-  /** 그룹 칩 미리보기 (윈도우 기본 툴팁): 구성원과 권한 한 줄씩 */
-  const groupTip = (name, ms) => `@${name}\n` + (ms.length ? ms.map((m) => `${m.name} · ${m.perm === "read" ? "보기만" : "편집"}`).join("\n") : "구성원이 없습니다.");
   const GROUP_ICON = '<svg class="person-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.5" cy="5" r="2.5"/><circle cx="11" cy="5.5" r="2.2"/><path d="M0.5 14.5c0-2.9 2.2-4.8 5-4.8s5 1.9 5 4.8z"/><path d="M11.5 14.5c0-1.8-.6-3.3-1.7-4.3.4-.1.8-.2 1.2-.2 2.5 0 4.5 1.7 4.5 4.5z"/></svg>';
   const PERSON_ICON = '<svg class="person-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z"/></svg>';
   const meMark = (m) => (m === cleanName(state.myName) ? " (나)" : "");
   function renderMemberFilter() {
     const box = $("cal-members"), found = shownTags("members");
     // 스페이스 실제 멤버(나·팀원)를 앞에, 일정에만 적힌 이름은 뒤에
-    // 멤버 그룹은 사람 칩과 따로: 사람 뒤에 그룹 아이콘 칩 (일정에 안 적혀도 늘 보임), all 은 칩 없음
+    // 멤버 그룹은 사람 칩과 따로: 그룹 칩은 #cal-groups 묶음 (일정에 안 적혀도 늘 보임), all 은 칩 없음
     const groups = allGroups(), isGroup = (n) => n in groups || n.toLowerCase() === "all";
     const real = [state.myName, ...teamNames()].map(cleanName).filter((n, i, a) => n && a.indexOf(n) === i && !isGroup(n));
     const ms = [...real.filter((n) => found.includes(n)), ...found.filter((n) => !real.includes(n) && !isGroup(n))];
     const gs = Object.keys(groups).sort();
-    box.hidden = !ms.length && !gs.length && !state.calHidden.has(NO_MEMBER);
-    box.innerHTML = gs.map((g) => `<label class="mem-real mem-group" title="${esc(groupTip(g, groups[g]))}"><input type="checkbox" data-mem="${esc(g)}"${state.calHidden.has("@" + g) ? "" : " checked"}>` +
-      `${GROUP_ICON}<span class="chip-t">${esc(g)}</span></label>`).join("") + ms.map((m) => `<label${real.includes(m) ? ' class="mem-real"' : ""}><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
+    // 멤버 그룹은 따로 묶음 (#cal-groups). 숨김 키는 멤버와 같은 "@이름"
+    const gbox = $("cal-groups");
+    gbox.hidden = !gs.length;
+    gbox.innerHTML = gs.map((g) => `<label class="mem-group"><input type="checkbox" data-mem="${esc(g)}"${state.calHidden.has("@" + g) ? "" : " checked"}>` +
+      `${GROUP_ICON}<span class="chip-t">${esc(g)}</span></label>`).join("");
+    box.hidden = !ms.length && !state.calHidden.has(NO_MEMBER);
+    box.innerHTML = ms.map((m) => `<label${real.includes(m) ? ' class="mem-real"' : ""}><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
       `${PERSON_ICON}<span class="chip-t" title="${esc(m)}">${esc(m)}${meMark(m)}</span></label>`).join("") +
       `<label class="no-tag"><input type="checkbox" data-mem=""${state.calHidden.has(NO_MEMBER) ? "" : " checked"}>멤버 없는 일정</label>`;
   }
@@ -847,11 +849,12 @@
   }
 
   let lastMonthHtml = "";
+  const evSel = new Set();   // Ctrl+클릭으로 고른 일정 번호(data-k). 칩을 누르거나 끌어 놓으면 한꺼번에 더함
   function renderMonth() {
     if (monthData.key !== state.base + "|" + state.calYM) return loadMonth();
     const r = CAL.renderMonth({ ym: state.calYM, days: monthData.days, idx: state.sched, decos: state.decos, today: state.today, selected: state.noteDate });
     // 내용이 같으면 다시 그리지 않음 (스페이스 전환 때 여러 번 불려 깜빡이던 것)
-    if (r.html !== lastMonthHtml) { lastMonthHtml = r.html; $("cal-grid").innerHTML = r.html; CAL.fitCells($("cal-grid")); }
+    if (r.html !== lastMonthHtml) { lastMonthHtml = r.html; $("cal-grid").innerHTML = r.html; CAL.fitCells($("cal-grid")); evSel.clear(); }   // 다시 그리면 번호가 바뀌어 선택 풂
     renderTagFilter();
     renderMemberFilter();
     $("cal-footer").textContent = monthData.failed || `노트 ${r.notes}개 · 완료 ${r.done}/${r.total}`;
@@ -1565,7 +1568,7 @@
     rebuildSched();
   });
   // 멤버 칩: 태그 칩과 같음 (calHidden 에 "@이름")
-  $("cal-members").addEventListener("change", (e) => {
+  for (const box of [$("cal-members"), $("cal-groups")]) box.addEventListener("change", (e) => {
     const m = e.target.dataset.mem;
     if (m === undefined) return;
     const key = "@" + m;
@@ -1575,30 +1578,52 @@
   });
   // 칩 강조: 칩 사이 틈·꺼진 칩·태그 없는 칩 = 하던 강조 그대로 (줄 밖으로 나가야 풀림). 같은 칩 안 이동은 무시
   let hoverKey = null;
+  const CHIP_BOXES = ["cal-groups", "cal-members", "cal-tags"];
+  /** 그룹 g 에 멤버 m 이 드는가 (이름은 cleanName 으로 맞춤) */
+  const inGroup = (g, m) => (allGroups()[g] || []).some((x) => cleanName(x.name) === m);
+  const memOf = (l) => { const i = l.querySelector("input[data-mem]"); return i ? i.dataset.mem : null; };
+  /** 칩 줄 강조: pred 에 맞는 칩만 그대로, 나머지는 옅게 (스타일은 .hl·.hl-cur) */
+  function markChips(box, pred) {
+    for (const l of box.querySelectorAll("label")) l.classList.toggle("hl-cur", !!pred(l));
+    box.classList.add("hl");
+  }
+  function clearChipMarks() {
+    for (const id of CHIP_BOXES) {
+      $(id).classList.remove("hl");
+      for (const l of $(id).querySelectorAll("label.hl-cur")) l.classList.remove("hl-cur");
+    }
+  }
   function chipHover(box, attr, field) {
     box.addEventListener("mouseover", (e) => {
+      if (chipDrag && chipDrag.on) return;   // 끄는 중엔 강조를 바꾸지 않음
       const lab = e.target.closest("label"), inp = lab && lab.querySelector("input");
       if (inp && inp.checked && inp.dataset[attr] !== undefined) {
-        tagHover(inp.dataset[attr], field);
-        for (const l of box.querySelectorAll("label.hl-cur")) if (l !== lab) l.classList.remove("hl-cur");
-        lab.classList.add("hl-cur");
-        box.classList.add("hl");
+        const name = inp.dataset[attr];
+        tagHover(name, field);
+        markChips(box, (l) => l === lab);
+        // 그룹 ↔ 멤버는 서로 비춤: 그룹 칩 = 그 구성원 칩, 멤버 칩 = 그 사람이 든 그룹 칩 (나머지는 옅게)
+        if (box.id === "cal-groups") markChips($("cal-members"), (l) => inGroup(name, memOf(l)));
+        else if (box.id === "cal-members") markChips($("cal-groups"), (l) => inGroup(memOf(l), name));
       }
     });
-    box.addEventListener("mouseleave", () => {
-      tagHover(null);
-      box.classList.remove("hl");
-      for (const l of box.querySelectorAll("label.hl-cur")) l.classList.remove("hl-cur");
-    });
+    box.addEventListener("mouseleave", () => { tagHover(null); clearChipMarks(); });
   }
   chipHover($("cal-members"), "mem", "members");
+  chipHover($("cal-groups"), "mem", "members");   // 그룹 칩 = @그룹 을 적은 일정 강조
   // 멤버 칩 우클릭: 스페이스에 아직 없는 이름(일정에만 적힘) → 내 PC 스페이스 초대장 만들기 (트레이 프로그램이 스페이스를 묻고 복사)
   $("cal-members").addEventListener("contextmenu", (e) => {
     const lab = e.target.closest("label"), inp = lab && lab.querySelector("input[data-mem]");
     const m = inp && inp.dataset.mem;
+    // 실제 멤버 = 넣을 멤버 그룹 고르기 (트레이 프로그램이 메뉴를 띄움. 내 PC 스페이스만)
+    if (m && lab.classList.contains("mem-real") && bridge && bridge.groupMenu) return bridge.groupMenu("member", m);
     if (!m || lab.classList.contains("mem-real") || !bridge || !bridge.inviteFor) return;
     const keys = schedSpaces().filter((sp) => (state.evBySpace[sp.key] || []).some((ev) => (ev.members || []).includes(m))).map((sp) => sp.key);
     bridge.inviteFor(m, JSON.stringify(keys));
+  });
+  // 그룹 칩 우클릭 = 그 그룹에 넣을 멤버 고르기
+  $("cal-groups").addEventListener("contextmenu", (e) => {
+    const inp = e.target.closest("label") && e.target.closest("label").querySelector("input[data-mem]");
+    if (inp && bridge && bridge.groupMenu) bridge.groupMenu("group", inp.dataset.mem);
   });
   function tagHover(tag, field = "tags") {
     const key = tag != null ? field + ":" + tag : null;
@@ -1606,15 +1631,154 @@
     hoverKey = key;
     const grid = $("cal-grid");
     const on = tag != null;   // "" = 태그(멤버) 없는 일정
+    // 그룹 = @그룹 을 적은 일정 + 그 구성원 일정
+    const grp = on && field === "members" && !!tag && tag in allGroups();
+    const hit = (v) => v === tag || (grp && inGroup(tag, v));
     grid.classList.toggle("sp-hover", on);
     if (on) grid.style.setProperty("--spc", field === "tags" && tag ? tagColor(tag) : "var(--accent)");
     for (const el of grid.querySelectorAll(".ev[data-k]")) {
       const ev = evOf(el);
       const vs = (ev && ev[field]) || [];
-      el.classList.toggle("sp-on", !!(on && ev && (tag ? vs.includes(tag) : !vs.length)));
+      el.classList.toggle("sp-on", !!(on && ev && (tag ? vs.some(hit) : !vs.length)));
     }
   }
   chipHover($("cal-tags"), "tag", "tags");
+  // 칩 끌어 놓기 (HTML5 drag 말고 마우스 이벤트 = 커서는 윈도우 기본 그대로)
+  //  멤버·그룹·태그 칩 → 일정 = 그 일정에 @이름·#태그 더하기, 멤버 칩 → 그룹 칩 = 그 그룹에 넣기
+  //  Ctrl+클릭 = 칩 여러 개 고르기 (고른 칩 하나를 끌면 같이 끌림, Esc·그냥 클릭 = 풀기)
+  let chipDrag = null, chipDragged = false;
+  function chipOf(lab) {
+    const i = lab && lab.querySelector("input");
+    if (!i) return null;
+    if (i.dataset.tag) return { kind: "tag", name: i.dataset.tag, lab };
+    if (i.dataset.mem) return { kind: lab.classList.contains("mem-group") ? "group" : "member", name: i.dataset.mem, real: lab.classList.contains("mem-real"), lab };
+    return null;
+  }
+  const chipSel = () => CHIP_BOXES.flatMap((id) => Array.from($(id).querySelectorAll("label.chip-sel")));
+  const clearChipSel = () => { for (const l of chipSel()) l.classList.remove("chip-sel"); };
+  const markDrop = (el) => { for (const x of document.querySelectorAll(".drop-on")) if (x !== el) x.classList.remove("drop-on"); if (el) el.classList.add("drop-on"); };
+  /** 마우스 아래 놓을 곳: {ev, el} = 고칠 수 있는 일정, {group, el} = 실제 멤버만 끌 때의 그룹 칩 */
+  function chipTarget(x, y, items) {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return null;
+    const gl = el.closest("#cal-groups label.mem-group");
+    if (gl && items.every((c) => c.kind === "member" && c.real)) return { group: memOf(gl), el: gl };
+    const evEl = el.closest("#cal-grid .ev[data-k]"), ev = evOf(evEl);
+    if (ev && !ev.task && state.writable && canEdit(ev)) return { ev, el: evEl };
+    return null;
+  }
+  for (const id of CHIP_BOXES) {
+    const box = $(id);
+    box.addEventListener("mousedown", (e) => {
+      const c = e.button === 0 && chipOf(e.target.closest("label"));
+      if (!c) return;
+      e.preventDefault();   // 글자 선택 막기 (클릭은 그대로 옴)
+      chipDrag = { x: e.clientX, y: e.clientY, c, on: false };
+    });
+    // 끌고 난 클릭·Ctrl+클릭은 체크를 안 바꿈
+    box.addEventListener("click", (e) => {
+      const lab = e.target.closest("label");
+      if (!lab || e.target.tagName === "INPUT") return;   // label 이 input 에 한 번 더 보내는 클릭
+      if (chipDragged) { e.preventDefault(); return; }
+      if (e.ctrlKey && chipOf(lab)) { e.preventDefault(); lab.classList.toggle("chip-sel"); return; }
+      // 일정을 골라 둔 상태에서 칩 클릭 = 보기 끄기 대신 고른 일정 모두에 더하기 (고른 칩이면 고른 칩 모두)
+      if (evSel.size && chipOf(lab)) {
+        e.preventDefault();
+        const items = lab.classList.contains("chip-sel") ? chipSel().map(chipOf).filter(Boolean) : [chipOf(lab)];
+        const evs = selEvs();
+        clearEvSel(); clearChipSel();
+        addChipsToEvs(evs, items);
+        return;
+      }
+      clearChipSel();
+    });
+  }
+  document.addEventListener("mousemove", (e) => {
+    const d = chipDrag;
+    if (!d) return;
+    if (!d.on) {
+      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
+      d.items = d.c.lab.classList.contains("chip-sel") ? chipSel().map(chipOf).filter(Boolean) : [d.c];
+      d.on = true;
+      tipClear(); tagHover(null); clearChipMarks();
+      d.ghost = document.createElement("div");
+      d.ghost.className = "cal-spaces cal-tags chip-ghost";
+      for (const c of d.items) { const g = c.lab.cloneNode(true); g.classList.remove("chip-sel", "hl-cur", "drop-on"); d.ghost.appendChild(g); }
+      document.body.appendChild(d.ghost);
+    }
+    const gw = d.ghost.offsetWidth;   // 오른쪽 끝이면 마우스 왼쪽에
+    d.ghost.style.left = (e.clientX + 12 + gw <= innerWidth ? e.clientX + 12 : Math.max(0, e.clientX - 12 - gw)) + "px";
+    d.ghost.style.top = e.clientY + 10 + "px";
+    d.target = chipTarget(e.clientX, e.clientY, d.items);
+    markDrop(d.target && d.target.el);
+  });
+  document.addEventListener("mouseup", () => {
+    const d = chipDrag;
+    chipDrag = null;
+    if (!d || !d.on) return;
+    d.ghost.remove();
+    markDrop(null);
+    chipDragged = true;
+    setTimeout(() => { chipDragged = false; }, 0);
+    const t = d.target;
+    if (!t) return;
+    clearChipSel();
+    if (t.group) {
+      if (bridge && bridge.addToGroup) for (const c of d.items) bridge.addToGroup(c.name, t.group);
+      return;
+    }
+    const k = t.el.dataset.k, evs = evSel.has(k) ? selEvs() : [t.ev];   // 고른 일정에 놓으면 고른 것 모두에
+    if (evSel.has(k)) clearEvSel();
+    addChipsToEvs(evs, d.items);
+  });
+  // Ctrl+클릭 일정 = 고르기/풀기 (캡처 단계라 옮기기·수정 팝업보다 먼저 받고 막음)
+  let evSelClick = false;
+  $("cal-grid").addEventListener("mousedown", (e) => {
+    if (!e.ctrlKey || e.button !== 0) return;
+    const evEl = e.target.closest(".ev[data-k]"), ev = evOf(evEl);
+    if (!ev || ev.task || !state.writable || !canEdit(ev)) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    evSelClick = true;
+    const k = evEl.dataset.k;
+    if (evSel.has(k)) evSel.delete(k); else evSel.add(k);
+    markEvSel();
+  }, true);
+  $("cal-grid").addEventListener("click", (e) => {
+    if (evSelClick) { evSelClick = false; e.stopImmediatePropagation(); e.preventDefault(); }
+  }, true);
+  function markEvSel() {
+    for (const el of $("cal-grid").querySelectorAll(".ev[data-k]")) el.classList.toggle("ev-sel", evSel.has(el.dataset.k));
+  }
+  const clearEvSel = () => { evSel.clear(); markEvSel(); };
+  const selEvs = () => [...evSel].map((k) => evOf({ dataset: { k } })).filter(Boolean);
+  /** 칩들을 일정 여럿에 차례로 더함. 모두 이미 붙어 있으면 = 한 번 더 적용 = 모두에서 뺌. 실패는 모아서 한 번에 알림 */
+  async function addChipsToEvs(evs, items) {
+    const errs = [], remove = evs.every((ev) => evHasChips(ev, items));
+    for (const ev of evs) {
+      try { await addChipsToEv(ev, items, remove); } catch (err) { errs.push(`${ev.title}: ${err.message || err}`); }
+    }
+    if (errs.length) alert("일정에 더하지 못했습니다.\n" + errs.join("\n"));
+  }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { clearChipSel(); clearEvSel(); } });
+  /** 일정 ev 에 칩이 이미 다 붙었나 (근태의 태그는 셈에서 뺌) */
+  const evHasChips = (ev, items) => items.every((c) => c.kind === "tag"
+    ? ev.off || (ev.tags || []).includes(c.name)
+    : (ev.members || []).map(cleanName).includes(cleanName(c.name)));
+  /**
+   * 일정 ev 에 칩들 더하기(remove = 빼기): 멤버·그룹 = @이름, 태그 = #태그 (근태 줄엔 태그 칸이 없어 태그는 무시).
+   * 바뀐 게 없으면 저장 안 함
+   */
+  async function addChipsToEv(ev, items, remove = false) {
+    const o = evToObj(ev), ms = new Set(o.members.map(cleanName)), ts = new Set(o.tags);
+    const n0 = ms.size + ts.size;
+    for (const c of items) {
+      if (c.kind === "tag") { if (!ev.off) ts[remove ? "delete" : "add"](c.name); }
+      else ms[remove ? "delete" : "add"](cleanName(c.name));
+    }
+    if (ms.size + ts.size === n0) return;
+    o.members = [...ms]; o.tags = [...ts];
+    await writeEv(ev, schedLine(o), (ev.spaces || []).filter((k) => canEdit({ spaces: [k] })));
+  }
   // 태그 칩 우클릭 = 이름 일괄 변경: 쓸 수 있는 모든 스페이스 일정 파일의 "#옛이름" 을 "#새이름" 으로 (이미 있는 태그면 합쳐짐)
   const reEsc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   $("cal-tags").addEventListener("contextmenu", async (e) => {
@@ -1651,7 +1815,10 @@
   const tipClear = () => { clearTimeout(tipHide); clearTimeout(tipShow); tagTip.hidden = true; tipEl = null; };
   function tipRender(x, y) {
     if (move || drag) return;
-    const el = document.elementFromPoint(x, y), evEl = el && el.closest(".ev[data-k]"), ev = evOf(evEl);
+    const el = document.elementFromPoint(x, y);
+    const moreEl = el && el.closest(".ev-more[data-ks]");
+    if (moreEl) return tipMore(moreEl);
+    const evEl = el && el.closest(".ev[data-k]"), ev = evOf(evEl);
     if (!ev) return;
     measureCells();
     const cell = cellAt(x, y), day = cell ? cell.dataset.date : ev.start;
@@ -1678,9 +1845,42 @@
     tagTip.style.left = Math.max(minX, lx) + "px";
     tagTip.style.top = Math.max(minY, Math.min(r.top, maxY - h)) + "px";
   }
+  /** 숨은 일정 수 배지에 마우스 = 그 칸에서 숨은 일정만 카드로 (배지 아래쪽에) */
+  function tipMore(moreEl) {
+    const key = "more:" + moreEl.dataset.ks;
+    if (key === tipEl && !tagTip.hidden) return;
+    tipEl = key;
+    const evs = moreEl.dataset.ks.split(",").map((k) => evOf({ dataset: { k } })).filter(Boolean);
+    if (!evs.length) return;
+    tagTip.innerHTML = `<div class="tc-date">숨은 일정 ${evs.length}개</div>` +
+      evs.map((v) => `<div class="tc-card">${CAL.eventCard(v, tagColor)}</div>`).join("");
+    tagTip.hidden = false;
+    const r = moreEl.getBoundingClientRect(), w = tagTip.offsetWidth, h = tagTip.offsetHeight;
+    tagTip.style.left = Math.max(4, Math.min(r.left, innerWidth - w - 4)) + "px";
+    tagTip.style.top = Math.max(4, r.bottom + 4 + h <= innerHeight ? r.bottom + 4 : r.top - 4 - h) + "px";
+  }
+  // 멤버 그룹 칩에 마우스 = 일정 카드와 같은 카드로 구성원·권한 (윈도우 title 툴팁은 투명 웹뷰 창에서 안 뜸)
+  $("cal-groups").addEventListener("mouseover", (e) => {
+    const lab = e.target.closest("label.mem-group"), inp = lab && lab.querySelector("input[data-mem]");
+    if (!inp) return;
+    const name = inp.dataset.mem, ms = allGroups()[name] || [];
+    clearTimeout(tipShow); clearTimeout(tipHide);
+    tagTip.innerHTML = `<div class="tc-date">@${esc(name)} · ${ms.length}명</div>` + (ms.length
+      ? ms.map((m) => `<div class="tc-card">${esc(m.name)} <span class="tc-off">${m.perm === "read" ? "보기만" : "편집"}</span></div>`).join("")
+      : `<div class="tc-card">구성원이 없습니다.</div>`);
+    tagTip.hidden = false;
+    // 위치 = 칩 왼쪽(사이드바가 오른쪽이라), 안 들어가면 오른쪽
+    const r = lab.getBoundingClientRect(), w = tagTip.offsetWidth, h = tagTip.offsetHeight;
+    tagTip.style.left = (r.left - 6 - w >= 4 ? r.left - 6 - w : Math.min(r.right + 6, innerWidth - w - 4)) + "px";
+    tagTip.style.top = Math.max(4, Math.min(r.top, innerHeight - h - 4)) + "px";
+  });
+  $("cal-groups").addEventListener("mouseout", (e) => {
+    const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest("label.mem-group") : null;
+    if (e.target.closest("label.mem-group") && !to) tipClear();
+  });
   $("cal-grid").addEventListener("mousemove", (e) => {
     if (move || drag) return tipClear();
-    const ev = evOf(e.target.closest(".ev[data-k]"));
+    const ev = evOf(e.target.closest(".ev[data-k]")) || e.target.closest(".ev-more[data-ks]");
     clearTimeout(tipShow);
     if (!ev) return tipClear();
     clearTimeout(tipHide);
