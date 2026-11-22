@@ -121,7 +121,7 @@ app\run.bat
 
 `app\run.bat --dir "D:\업무" --port 8765` 처럼 스페이스 폴더와 포트를 지정할 수 있습니다. 소스로 실행할 때는 자동 업데이트를 받지 않습니다. UI 파일을 저장하면 창이 새로 고쳐지고, 파이썬 파일을 저장하면 앱이 다시 시작됩니다.
 
-자동 시험은 `tests/` 에 있습니다. 저장소 루트에서 `python -m unittest discover -s tests -v`(서버 동기화), `node --test tests/`(노트 합치기), `python tests/e2e_ui.py`(화면 2개와 서버, 약 1분)를 실행합니다.
+자동 시험은 `tests/` 에 있습니다. 저장소 루트에서 `python -m unittest discover -s tests -v`(서버 동기화·인증·파서·설정 옮기기·업데이트), `node --test tests/`(노트 합치기·일정 줄 쓰기·정규식), `python tests/e2e_ui.py`(화면 2개와 서버, 약 1분)를 실행합니다.
 
 ### 편집기 빌드
 

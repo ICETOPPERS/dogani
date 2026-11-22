@@ -26,7 +26,7 @@
 
 ## 1. 개요
 
-Windows 전용 단일 프로그램. 노트 서버, 오버레이 뷰어, 트레이를 겸하며 같은 프로그램끼리 HTTP와 SSE로 통신함. 스페이스는 약 1초 간격으로 폴더를 감시해 알림. Python 약 3.4천 줄, JS 약 2.1천 줄이며 자동 테스트는 없음.
+Windows 전용 단일 프로그램. 노트 서버, 오버레이 뷰어, 트레이를 겸하며 같은 프로그램끼리 HTTP와 SSE로 통신함. 스페이스는 약 1초 간격으로 폴더를 감시해 알림. Python 약 3.4천 줄, JS 약 2.1천 줄. 자동 시험은 `tests/` (Python unittest·node --test, Python↔JS 공용 정답 `tests/fixtures/shared.json`).
 
 ## 2. 구성
 

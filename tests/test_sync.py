@@ -5,7 +5,6 @@
 """
 import json
 import os
-import re
 import shutil
 import socket
 import sys
@@ -323,30 +322,6 @@ class BrokenFileTest(unittest.TestCase):
         self.assertEqual(len(self.backups(sp)), 1)
         self.assertEqual(len(self.backups(tj)), 1)
         self.assertEqual(space.read_json(sp)["id"], host.space_id)   # 새 파일은 정상으로 다시 씀
-
-
-class TagRenameTest(unittest.TestCase):
-    """app.js 태그 이름 일괄 변경과 같은 규칙 (JS 정규식을 그대로 옮김: 바꾸면 같이 고칠 것)"""
-
-    @staticmethod
-    def rename(text, old, new):
-        return re.sub(r"(^|[\s,，])#" + re.escape(old) + r"(?=[\s,，]|$)", lambda m: m[1] + "#" + new, text, flags=re.M)
-
-    def test_rules(self):
-        src = "# 팀 일정\n261120, 점검, #전산 #외근\n261121, 교육, #전산팀\n261122,가,#전산,장소\n- [ ] 할일 #전산\n"
-        out = self.rename(src, "전산", "IT")
-        self.assertIn("#IT #외근", out)
-        self.assertIn("#전산팀", out)          # 앞부분만 같은 태그는 그대로
-        self.assertIn(",#IT,장소", out)
-        self.assertIn("할일 #IT", out)
-        self.assertIn("# 팀 일정", out)         # 제목 줄은 그대로
-
-    def test_parse_after_rename(self):
-        import schedule
-        ev = schedule.parse_line("261120, 점검, #IT #외근") if hasattr(schedule, "parse_line") else None
-        if ev is None:
-            self.skipTest("schedule.parse_line 없음")
-        self.assertEqual(ev["tags"], ["IT", "외근"])
 
 
 if __name__ == "__main__":
