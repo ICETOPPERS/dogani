@@ -1833,14 +1833,16 @@
     const offs = CAL.slotLabels(day, state.sched);
     tagTip.innerHTML = `<div class="tc-date">${day.replace(/-/g, ".")} (${wk})` +
       (offs.length ? ` <span class="tc-off">${offs.map(esc).join(" · ")}</span>` : "") + "</div>" +
-      shown.map((v) => `<div class="tc-card">${CAL.eventCard(v, tagColor)}</div>`).join("");
+      shown.map((v) => `<div class="tc-card" data-k="${v.k ?? ""}">${CAL.eventCard(v, tagColor)}</div>`).join("");
     tagTip.hidden = false;
+    tagTip.scrollTop = 0;
     // 위치 = 그 날짜 칸 오른쪽(칸 위쪽에 맞춤). 보이는 영역 = 창과 모니터 화면이 겹치는 부분
     // (창이 화면 오른쪽 밖으로 걸쳐 있으면 화면 끝까지만). 오른쪽에 안 들어가면 칸 왼쪽, 거기도 안 되면 끝에 붙임
+    // 보이는 영역 = 창 안. (예전엔 모니터 화면과도 겹쳐 잘랐는데, 배율·여러 모니터에서 screen 값과 screenX 단위가 달라
+    //  오른쪽 공간을 실제보다 훨씬 작게 재서 자리가 넉넉해도 왼쪽에 떴음)
+    const minX = 4, maxX = innerWidth - 4, minY = 4, maxY = innerHeight - 4;
+    tagTip.style.maxHeight = Math.max(80, maxY - minY) + "px";   // 넘치면 카드 안 스크롤
     const r = (cell || evEl).getBoundingClientRect(), w = tagTip.offsetWidth, h = tagTip.offsetHeight;
-    const sc = screen, sx = window.screenX, sy = window.screenY;
-    const minX = Math.max(0, (sc.availLeft || 0) - sx) + 4, maxX = Math.min(innerWidth, (sc.availLeft || 0) + sc.availWidth - sx) - 4;
-    const minY = Math.max(0, (sc.availTop || 0) - sy) + 4, maxY = Math.min(innerHeight, (sc.availTop || 0) + sc.availHeight - sy) - 4;
     const lx = r.right + 4 + w <= maxX ? r.right + 4 : r.left - 4 - w >= minX ? r.left - 4 - w : maxX - w;
     tagTip.style.left = Math.max(minX, lx) + "px";
     tagTip.style.top = Math.max(minY, Math.min(r.top, maxY - h)) + "px";
@@ -1853,11 +1855,16 @@
     const evs = moreEl.dataset.ks.split(",").map((k) => evOf({ dataset: { k } })).filter(Boolean);
     if (!evs.length) return;
     tagTip.innerHTML = `<div class="tc-date">숨은 일정 ${evs.length}개</div>` +
-      evs.map((v) => `<div class="tc-card">${CAL.eventCard(v, tagColor)}</div>`).join("");
+      evs.map((v) => `<div class="tc-card" data-k="${v.k ?? ""}">${CAL.eventCard(v, tagColor)}</div>`).join("");
     tagTip.hidden = false;
-    const r = moreEl.getBoundingClientRect(), w = tagTip.offsetWidth, h = tagTip.offsetHeight;
+    tagTip.scrollTop = 0;
+    const r = moreEl.getBoundingClientRect();
+    // 아래 공간이 넓으면 배지 아래, 아니면 위. 그 공간 안에서 넘치면 카드 안 스크롤
+    const below = innerHeight - r.bottom - 8, above = r.top - 8, down = below >= above;
+    tagTip.style.maxHeight = Math.max(80, down ? below : above) + "px";
+    const w = tagTip.offsetWidth, h = tagTip.offsetHeight;
     tagTip.style.left = Math.max(4, Math.min(r.left, innerWidth - w - 4)) + "px";
-    tagTip.style.top = Math.max(4, r.bottom + 4 + h <= innerHeight ? r.bottom + 4 : r.top - 4 - h) + "px";
+    tagTip.style.top = (down ? r.bottom + 4 : Math.max(4, r.top - 4 - h)) + "px";
   }
   // 멤버 그룹 칩에 마우스 = 일정 카드와 같은 카드로 구성원·권한 (윈도우 title 툴팁은 투명 웹뷰 창에서 안 뜸)
   $("cal-groups").addEventListener("mouseover", (e) => {
@@ -1878,16 +1885,63 @@
     const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest("label.mem-group") : null;
     if (e.target.closest("label.mem-group") && !to) tipClear();
   });
+  // 카드로 옮겨 가는 길: 일정을 벗어난 점(tipFrom)과 카드 가까운 변이 이루는 삼각형 안이면 닫지 않고 기다림
+  // (대각선으로 가다 옆 일정을 스쳐도 카드가 바뀌거나 닫히지 않게). 카드 안 = 휠·끌기로 스크롤
+  let tipFrom = null;
+  const inTri = (p, a, b, c) => {
+    const s = (u, v, w) => (u.x - w.x) * (v.y - w.y) - (v.x - w.x) * (u.y - w.y);
+    const d1 = s(p, a, b), d2 = s(p, b, c), d3 = s(p, c, a);
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+  };
+  function towardTip(x, y) {
+    if (tagTip.hidden || !tipFrom) return false;
+    // 밑변 = 카드에서 마우스 쪽 변 전체 (위 끝~아래 끝)
+    const r = tagTip.getBoundingClientRect(), ex = tipFrom.x < r.left ? r.left : tipFrom.x > r.right ? r.right : null;
+    const a = ex === null ? { x: r.left, y: tipFrom.y < r.top ? r.top : r.bottom } : { x: ex, y: r.top };
+    const b = ex === null ? { x: r.right, y: a.y } : { x: ex, y: r.bottom };
+    // 꼭짓점 = 일정을 벗어난 점에 고정 (이동마다 옮기면 1~2px 손떨림에도 벗어나 바로 닫혔음)
+    return inTri({ x, y }, tipFrom, a, b);
+  }
+  const tipLater = (ms) => { clearTimeout(tipHide); tipHide = setTimeout(tipClear, ms); };
   $("cal-grid").addEventListener("mousemove", (e) => {
     if (move || drag) return tipClear();
-    const ev = evOf(e.target.closest(".ev[data-k]")) || e.target.closest(".ev-more[data-ks]");
-    clearTimeout(tipShow);
-    if (!ev) return tipClear();
-    clearTimeout(tipHide);
     const x = e.clientX, y = e.clientY;
+    clearTimeout(tipShow);
+    // 카드 쪽으로 가는 중 = 유지. 그 자리에 멈추면 0.3초 뒤 닫힘
+    if (towardTip(x, y)) return tipLater(300);
+    const ev = evOf(e.target.closest(".ev[data-k]")) || e.target.closest(".ev-more[data-ks]");
+    if (!ev) {
+      // 카드를 띄운 그 날짜 칸 안의 일정 사이 틈 = 그대로 (같은 날 일정끼리 옮길 때 꺼지던 것)
+      const c = !tagTip.hidden && cellAt(x, y);
+      if (c && c.dataset.date === tipEl) { clearTimeout(tipHide); return; }
+      tipFrom = null;
+      return tipClear();   // 삼각형 밖 빈 곳 = 바로 닫음
+    }
+    clearTimeout(tipHide);
+    tipFrom = { x, y };
     tipShow = setTimeout(() => tipRender(x, y), 100);
   });
-  $("cal-grid").addEventListener("mouseleave", tipClear);
+  $("cal-grid").addEventListener("mouseleave", (e) => { if (!tagTip.contains(e.relatedTarget)) tipLater(150); });
+  // 카드 안 일정 클릭 = 달력에서 누른 것과 같음 (가려진 일정도 고칠 수 있게)
+  tagTip.addEventListener("click", (e) => {
+    const card = e.target.closest(".tc-card[data-k]"), ev = evOf(card);
+    if (!ev) return;
+    tipClear();
+    e.stopPropagation();   // "팝업 밖 누르면 닫기" 가 방금 연 팝업을 닫지 않게
+    if (ev.task) { if (bridge) bridge.openTask(ev.task.note, ev.task.line, ev.task.raw); return; }
+    if (canEdit(ev)) evAdd.open("", "", e.clientX, e.clientY, ev);
+  });
+  tagTip.addEventListener("mouseenter", () => { clearTimeout(tipHide); clearTimeout(tipShow); });
+  tagTip.addEventListener("mouseleave", (e) => {
+    const back = e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("#cal-grid .ev[data-k], #cal-grid .ev-more");
+    if (!back) tipLater(150);
+  });
+  // 카드가 떠 있고 넘치면 달력 위 휠 = 제자리에서 카드 스크롤 (Ctrl+휠 글자 크기는 그대로)
+  $("cal-grid").addEventListener("wheel", (e) => {
+    if (e.ctrlKey || tagTip.hidden || tagTip.scrollHeight <= tagTip.clientHeight) return;
+    e.preventDefault();
+    tagTip.scrollTop += e.deltaY;
+  }, { passive: false });
   $("cal-grid").addEventListener("mousedown", tipClear);
   $("ev-add-tagpick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.toggleTag(b.dataset.tag); });
   $("ev-add-mempick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) evAdd.toggleTag(b.dataset.tag, "ev-add-members"); });

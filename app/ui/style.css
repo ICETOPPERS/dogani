@@ -723,8 +723,8 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .cal-tags.hl label:not(.hl-cur):has(input:checked) { opacity: .55; }
 /* 달력 일정 정보 카드: 달력보다 한 단계 큰 글자, Ctrl+휠과 상관없이 고정 크기 */
 .ev-tagtip {
-  position: fixed; z-index: 40; pointer-events: none;
-  min-width: 160px; max-width: 300px; padding: 16px 18px;  /* 일정 팝업(.ev-add)과 같은 여백 */
+  position: fixed; z-index: 40;
+  width: 260px; box-sizing: border-box; padding: 16px 18px;  /* 폭 고정 = 같은 칸이면 늘 같은 자리·같은 모양 (내용 길이에 따라 좌우가 바뀌던 것). 여백은 일정 팝업(.ev-add)과 같음 */
   display: flex; flex-direction: column; gap: 8px;
   font-size: 13px; color: var(--text); background: var(--bg-solid);
   border: 1px solid var(--border); border-radius: 6px;
@@ -733,14 +733,18 @@ body.writable .cal-grid .ev.arrow[data-k]:hover { outline: none; background: col
 .ev-tagtip[hidden] { display: none; }
 .ev-tagtip .tc-date { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
 .ev-tagtip .tc-off { color: var(--sun); font-weight: 600; }
-.ev-tagtip .tc-card + .tc-card { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
-.ev-tagtip { max-height: 80vh; overflow: hidden; }
+.ev-tagtip .tc-card { margin: 0 -8px; padding: 6px 8px; border-radius: 4px; }   /* 좌우를 카드 여백으로 넓혀 마우스 강조가 글자에 붙지 않게 */
+.ev-tagtip .tc-card + .tc-card { margin-top: 4px; box-shadow: 0 -3px 0 -2px var(--border); }   /* 구분선 = 위 틈 가운데 1px (강조 배경 밖) */
+/* 넘치면 카드 안에서 스크롤 (높이는 app.js 가 보이는 영역에 맞춰 max-height 로 줌) */
+.ev-tagtip { max-height: 80vh; overflow-y: auto; overscroll-behavior: contain; }
+.ev-tagtip > * { flex: none; }
 .ev-tagtip .tc-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; padding-left: 8px; border-left: 3px solid var(--ev); margin-bottom: 4px; word-break: break-all; }
 .ev-tagtip .tc-badge { font-weight: normal; font-size: 11px; padding: 0 5px; border-radius: 3px; background: color-mix(in srgb, var(--ev) 18%, transparent); color: var(--text-muted); }
-.ev-tagtip .tc-row { display: flex; gap: 10px; line-height: 1.5; align-items: baseline; }
-.ev-tagtip .tc-k { flex: none; min-width: 44px; white-space: nowrap; color: var(--text-muted); }
+.ev-tagtip .tc-row { display: flex; gap: 10px; line-height: 20px; align-items: flex-start; }  /* 줄 높이 20px 고정 = 칩(18+테두리 2) 과 이름 칸이 같은 높이 */
+.ev-tagtip .tc-k { flex: none; width: 4.2em; white-space: nowrap;  /* 가장 긴 이름(스페이스) 너비로 고정 = 값 열이 한 줄로 맞음 */ color: var(--text-muted); }
 .ev-tagtip .tc-v { display: flex; flex-wrap: wrap; gap: 4px; white-space: pre-wrap; word-break: break-all; }
 .ev-tagtip .tc-dim { color: var(--text-muted); }
+.ev-tagtip .tc-chip { line-height: 18px; }
 .ev-tagtip .tc-chip, .ev-add-tagpick button { display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text); }
 .ev-add-tagpick { display: flex; flex-wrap: wrap; gap: 3px; flex-basis: 100%; max-height: 62px; overflow-y: auto; }
 .ev-add-grid .v-tags { flex-wrap: wrap; }   /* 태그 칩은 입력칸 아래 줄 전체 너비 */
@@ -857,3 +861,4 @@ body.writable .cal-grid .ev.task .ev-check { cursor: pointer; }
 /* 칩 끌어 놓기 (app.js chipDrag): 마우스를 따라오는 칩 */
 .chip-ghost { position: fixed; z-index: 1000; pointer-events: none; display: flex; flex-wrap: nowrap; gap: 4px; width: max-content; white-space: nowrap; opacity: .9; }
 .chip-ghost label { flex: none; }
+.ev-tagtip .tc-card[data-k]:not([data-k=""]):hover { background: var(--bg-hover); border-radius: 4px; }
