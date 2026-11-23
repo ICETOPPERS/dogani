@@ -1,5 +1,13 @@
 {
-  "_": "Python(schedule.py·server.py)과 JS(app.js·calendar.js)가 같은 답을 내야 하는 정답 파일. test_parse.py 와 shared.test.mjs 가 함께 읽음",
+  "_": "Python(schedule.py·server.py·team.py)과 JS(app.js·calendar.js)가 같은 답을 내야 하는 정답 파일. test_parse.py 와 shared.test.mjs 가 함께 읽음",
+  "names": [
+    {"in": "홍길동", "key": "홍길동", "clean": "홍길동"},
+    {"in": "전 산", "key": "전산", "clean": "전산"},
+    {"in": "  Kim  Lee ", "key": "kimlee", "clean": "KimLee"},
+    {"in": "@All", "key": "all", "clean": "All"},
+    {"in": "#가,나，다", "key": "가나다", "clean": "가나다"},
+    {"in": "", "key": "", "clean": ""}
+  ],
   "sched": [
     {"line": "261120, 점검, #전산",
      "ev": {"start": "2026-11-20", "end": "2026-11-20", "time": "", "title": "점검", "tags": ["전산"], "members": [],

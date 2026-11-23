@@ -109,13 +109,24 @@ def _get(url, timeout):
         return r.read()
 
 
+TAG_PAGES = 5   # 100개씩. tags API 는 순서를 약속하지 않아 100개가 넘으면 다음 쪽도 봄 (태그 정리로 보통 1쪽)
+
+
 def latest_tag(timeout=5):
-    """GitHub 의 가장 최신 버전 태그. 확인 못 하면 None"""
-    try:
-        tags = json.loads(_get(f"https://api.github.com/repos/{REPO}/tags?per_page=100", timeout))
-    except (OSError, ValueError):
-        return None
-    names = [t.get("name", "") for t in tags if TAG_RE.match(t.get("name", ""))]
+    """GitHub 의 가장 최신 버전 태그. 확인 못 하면 None.
+    비인증 API 는 IP 마다 시간당 60회: 켤 때 tags 1회 + 1분 뒤 releases/latest 1회라 사내 NAT 하나에 여럿이어도 넉넉함.
+    한도에 걸리면(403) None = 이번엔 업데이트 안 함. 둘째 쪽부터 실패하면 그때까지 본 태그로 (첫 쪽만 보던 예전과 같음)"""
+    names = []
+    for page in range(1, TAG_PAGES + 1):
+        try:
+            tags = json.loads(_get(f"https://api.github.com/repos/{REPO}/tags?per_page=100&page={page}", timeout))
+        except (OSError, ValueError):
+            break
+        if not isinstance(tags, list):
+            break
+        names += [n for n in (str(t.get("name") or "") for t in tags if isinstance(t, dict)) if TAG_RE.match(n)]
+        if len(tags) < 100:
+            break
     return max(names) if names else None  # vYY.MM.DD.NN 은 문자열 정렬 = 시간순
 
 

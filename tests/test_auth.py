@@ -4,6 +4,7 @@ import secrets
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -135,23 +136,50 @@ class ProveTest(HostCase):
 
 
 class JoinGateTest(unittest.TestCase):
+    def locked(self, g, ip):
+        with self.assertRaises(TeamError) as cm:
+            g.enter(ip)
+        self.assertEqual(cm.exception.status, 429)
+
     def test_lock_and_reset(self):
         g, ip = JoinGate(), "192.0.2.9"
         for _ in range(team.FAIL_LIMIT):
-            g.check(ip)
-            with self.assertRaises(TeamError):
-                g.fail(ip)
-        with self.assertRaises(TeamError) as cm:
-            g.check(ip)
-        self.assertEqual(cm.exception.status, 429)
-        g.check("192.0.2.10")                          # 다른 IP 는 따로 셈
-        g.fails[ip][1] = time.time() - 1               # 잠금 시간이 지남
-        g.check(ip)
-        with self.assertRaises(TeamError):
-            g.fail(ip)
-        self.assertEqual(g.fails[ip][0], 1)            # 잠금이 풀린 뒤 틀리면 처음부터 셈
+            g.enter(ip)                                # 들어올 때 셈 (동시 요청도 한도 안)
+        self.locked(g, ip)
+        g.enter("192.0.2.10")                          # 다른 IP 는 따로 셈
+        g.fails[ip][1] = time.time() - team.FAIL_LOCK - 1   # 잠금 시간이 지남
+        g.enter(ip)                                    # 한 번은 됨
+        self.locked(g, ip)                             # 그 뒤 바로 다시 잠김 (61초 간격 우회 막기)
+        g.fails[ip][1] = time.time() - JoinGate.FAIL_WINDOW - 1   # 오래 조용함 → 처음부터 셈
+        g.enter(ip)
+        self.assertEqual(g.fails[ip][0], 1)
         g.ok(ip)
         self.assertNotIn(ip, g.fails)
+
+    def test_refund(self):
+        """이름 겹침처럼 초대장은 맞는 실패는 횟수에 넣지 않음"""
+        g, ip = JoinGate(), "192.0.2.9"
+        for _ in range(team.FAIL_LIMIT * 2):
+            g.enter(ip)
+            g.refund(ip)
+        g.enter(ip)
+        self.assertEqual(g.fails[ip][0], 1)
+
+    def test_concurrent_enter(self):
+        """동시에 들어온 요청도 FAIL_LIMIT 개만 통과"""
+        g, ip, passed = JoinGate(), "192.0.2.9", []
+        def run():
+            try:
+                g.enter(ip)
+                passed.append(1)
+            except TeamError:
+                pass
+        ts = [threading.Thread(target=run) for _ in range(team.FAIL_LIMIT * 4)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(len(passed), team.FAIL_LIMIT)
 
 
 if __name__ == "__main__":

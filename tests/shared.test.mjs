@@ -21,12 +21,15 @@ function cut(src, from, to, what) {
 /** 한 줄짜리 선언 `const NAME = ...;` */
 const line = (src, start) => cut(src, start, "\n", start);
 
+// @이름 규칙(cleanName·nameKey·uniqNames)은 calendar.js 에 있고 app.js 는 CAL 에서 꺼내 씀
+const names = cut(cal, "const cleanName = ", "  /**\n   * 근태", "cleanName·nameKey");
 const sched = new Function(
-  line(app, "const cleanName = ") + "\n" +
+  names + "\n" +
   cut(app, "const LIST_RE = ", "// ---- 할일(노트 체크박스 줄) 날짜", "schedLine·evToObj") + "\n" +
   line(app, "const TASK_BOX_RE = ") + "\n" + line(app, "const TASK_DATE_RE = ") + "\n" +
   "return { schedLine, evToObj, LIST_RE, WHO_RE, TASK_BOX_RE, TASK_DATE_RE };")();
-const offKind = new Function(cut(cal, "function offKind(", "/**", "offKind") + "\nreturn offKind;")();
+const offKind = new Function(names + cut(cal, "function offKind(", "/**", "offKind") + "\nreturn offKind;")();
+const nameFns = new Function(names + "\nreturn { cleanName, nameKey, uniqNames };")();
 // 태그 이름 일괄 변경: 원본 정규식 줄을 그대로 실행
 const tagRe = new Function("old",
   line(app, "const reEsc = ") + "\n" + line(app, "const re = new RegExp(`(^|") + "\nreturn re;");
@@ -40,6 +43,21 @@ for (const c of shared.sched) {
     assert.equal(sched.schedLine(sched.evToObj(ev)), c.line);
   });
 }
+
+test("@이름 비교 규칙 (Python name_key 와 같음)", () => {
+  for (const c of shared.names) {
+    assert.equal(nameFns.nameKey(c.in), c.key, c.in);
+    assert.equal(nameFns.cleanName(c.in), c.clean, c.in);
+  }
+  assert.deepEqual(nameFns.uniqNames(["Kim", "kim", " 전 산", "전산", "", null, "박"]), ["Kim", "전산", "박"]);
+});
+
+test("근태: 띄어 쓴 이름·대소문자 달라도 내 쉬는 날", () => {
+  assert.equal(offKind({ holiday: true, members: ["Kim"] }, "kim"), "rest");
+  assert.equal(offKind({ holiday: true, members: ["x"], reach: ["전 산"] }, "전산"), "rest");
+  assert.equal(offKind({ holiday: true, members: ["ALL"] }, "남"), "rest");
+  assert.equal(offKind({ holiday: true, members: ["박"] }, "남"), "leave");
+});
 
 test("정규식 (할일 체크 칸·목록 기호·작성자 꼬리표·할일 날짜)", () => {
   for (const c of shared.lines) {

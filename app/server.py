@@ -15,6 +15,7 @@ import queue
 import re
 import secrets
 import socket
+import socketserver
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,7 +23,7 @@ from urllib.parse import parse_qs, urlparse
 
 import schedule
 
-from team import FAIL_LIMIT, FAIL_LOCK, TeamError
+from team import FAIL_LIMIT, FAIL_LOCK, INVITE_TTL, TeamError, bad_code
 
 POLL_INTERVAL = 1.0      # 파일 변경 감시 주기(초)
 HEARTBEAT_INTERVAL = 15  # SSE keep-alive 주기(초)
@@ -307,7 +308,7 @@ class NoteStore:
                     return None
             else:
                 if not root or not os.path.isdir(root):
-                    raise OSError("todo 경로가 지정되지 않았습니다")
+                    raise OSError("스페이스 폴더가 지정되지 않았습니다.")
                 folder = os.path.join(root, f"{d.year:04d}.{d.month:02d}")
                 os.makedirs(folder, exist_ok=True)
                 path = os.path.join(folder, f"{d:%y%m%d} {WEEKDAYS[d.weekday()]}.md")
@@ -346,7 +347,7 @@ class NoteStore:
             # 경로도 잠금 안에서 한 번만 정함 (그 사이 올해 일정 파일이 생겨도 검사·꼬리표·쓰기가 같은 파일)
             path = self.sched_doc_path()
             if not path:
-                raise OSError("todo 경로가 지정되지 않았습니다")
+                raise OSError("스페이스 폴더가 지정되지 않았습니다.")
             exists = os.path.exists(path)
             if exists and (new_only or (base_mtime is not None and os.stat(path).st_mtime_ns // 1_000_000 != base_mtime)):
                 return None
@@ -499,15 +500,18 @@ class Handler(BaseHTTPRequestHandler):
         # 내 LAN 주소로 보내면 비밀값이 안 붙으므로, 참여하는 쪽이 보낸 자기 서버 id 로도 가림
         if ctx.owner or str(body.get("instance") or "") == share.instance_id:
             raise TeamError("own_space", "이 PC 의 스페이스입니다.")
-        share.join_gate.check(ctx.ip)
+        share.join_gate.enter(ctx.ip)
         host = next((h for h in list(share.spaces.values()) if h.has_invite(body.get("code"))), None)
         if not host:
-            share.join_gate.fail(ctx.ip)
+            raise bad_code()
         try:
             res = host.join(ctx.ip, body.get("code"), body.get("name"))
-        except TeamError as e:
-            if e.code == "bad_code":   # 확인한 사이 초대장이 만료·사용됨 → 틀린 횟수에 넣음
-                share.join_gate.fail(ctx.ip)
+        except Exception as e:
+            # 확인한 사이 만료·사용된 초대장은 센 그대로, 이름 겹침·저장 실패 등 초대장 탓이 아닌 실패는 돌려줌
+            if not (isinstance(e, TeamError) and e.code == "bad_code"):
+                share.join_gate.refund(ctx.ip)
+            if isinstance(e, OSError):   # team.json 저장 실패: 연결을 끊지 말고 이유를 알림
+                raise TeamError("write_failed", f"참여 정보를 저장하지 못했습니다.\n({e})", 500) from e
             raise
         share.join_gate.ok(ctx.ip)
         res.update(pub=host.pub, team=host.name, space=host.space_id, pc=share.pc_name)
@@ -554,7 +558,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/schedule" and method == "GET":
             return self._send_json({"events": team.with_authors(team.store.schedule()), "writable": writable,
                                     "decos": team.with_authors(team.store.decorations()),
-                                    "tasks": team.store.dated_tasks(),
+                                    # 날짜 붙은 할일은 주인 달력에만 (내 노트 할일은 남에게 보이지 않음)
+                                    "tasks": team.store.dated_tasks() if ctx.owner else [],
                                     "members": team.mention_names(),   # @멤버 칩 후보 (팀원·그룹·all)
                                     "groups": team.group_cards()})     # 사이드바 멤버 그룹 칩 (구성원·권한 미리보기)
         # 팀원이 생긴 뒤부터 새로 쓰거나 고친 줄에 작성자 꼬리표 (혼자 쓰는 동안은 노트가 예전과 같음)
@@ -626,6 +631,18 @@ class _HTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
     stopping = False
 
+    def server_bind(self):
+        # HTTPServer.server_bind 는 socket.getfqdn(DNS 역조회)을 불러 느린 망에서 켜기를 몇 분씩 막음. server_name 은 안 씀
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+    def close_later(self):
+        """serve_forever 를 멈추고 듣는 소켓까지 닫음. shutdown 은 루프가 끝날 때까지 기다리므로 다른 스레드에서"""
+        def run():
+            self.shutdown()
+            self.server_close()
+        threading.Thread(target=run, daemon=True).start()
+
 
 def local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -639,26 +656,32 @@ def local_ip():
 
 
 class JoinGate:
-    """초대장 참여 시도 제한 (IP 마다, 스페이스와 상관없이): FAIL_LIMIT 번 틀리면 FAIL_LOCK 초 잠금"""
+    """초대장 참여 시도 제한 (IP 마다, 스페이스와 상관없이): FAIL_LIMIT 번 틀리면 마지막 시도부터 FAIL_LOCK 초 잠금.
+    - 시도는 들어올 때(enter) 미리 셈: 검사와 셈이 따로면 동시에 보낸 요청이 모두 검사를 통과해 한도를 넘김
+    - 횟수는 FAIL_WINDOW 동안 시도가 없어야 0: 잠금만 지나면 0 이면 61초마다 FAIL_LIMIT 번씩 계속 시도할 수 있음.
+      잠금이 풀린 뒤 또 틀리면 바로 다시 잠김 (첫 FAIL_LIMIT 번 뒤로는 FAIL_LOCK 초에 한 번꼴)"""
+    FAIL_WINDOW = INVITE_TTL   # 초대장 수명만큼
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.fails = {}   # ip -> [횟수, 잠금 해제 시각]
+        self.fails = {}   # ip -> [횟수, 마지막 시도 시각]
 
-    def check(self, ip):
+    def enter(self, ip):
+        """시도 하나를 셈. 잠겨 있으면 TeamError(429)"""
+        with self.lock:
+            now, f = time.time(), self.fails.get(ip)
+            if f and now - f[1] > self.FAIL_WINDOW:
+                f = None
+            if f and f[0] >= FAIL_LIMIT and now < f[1] + FAIL_LOCK:
+                raise TeamError("locked", f"여러 번 틀려서 {FAIL_LOCK}초 동안 잠겼습니다.", 429)
+            self.fails[ip] = [(f[0] if f else 0) + 1, now]
+
+    def refund(self, ip):
+        """틀린 초대장이 아닌 실패(이름 겹침 등) → 센 시도를 돌려줌"""
         with self.lock:
             f = self.fails.get(ip)
-            if f and f[0] >= FAIL_LIMIT and time.time() < f[1]:
-                raise TeamError("locked", f"여러 번 틀려서 {FAIL_LOCK}초 동안 잠겼습니다.", 429)
-
-    def fail(self, ip):
-        with self.lock:
-            f = self.fails.setdefault(ip, [0, 0])
-            if time.time() > f[1]:
-                f[0] = 0
-            f[0] += 1
-            f[1] = time.time() + FAIL_LOCK
-        raise TeamError("bad_code", "초대장 코드가 맞지 않거나 만료됐습니다.\n15분 안에 한 번만 쓸 수 있습니다.", 401)
+            if f:
+                f[0] = max(0, f[0] - 1)
 
     def ok(self, ip):
         with self.lock:
@@ -708,7 +731,7 @@ class ShareServer:
         self.running = False
         if self.httpd:
             self.httpd.stopping = True
-            threading.Thread(target=self.httpd.shutdown, daemon=True).start()
+            self.httpd.close_later()
 
     def _watch_loop(self):
         while self.running:

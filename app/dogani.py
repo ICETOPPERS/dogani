@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDia
 import holidays
 import liveupdate
 import space
+from schedule import name_key
 from server import CLIENT_KEY, HOST_HEADER, KEY_HEADER, OWNER_HEADER, TOKEN_HEADER, USER_HEADER, ShareServer
 from team import TeamError, TeamHost, clean_name, verify_hello
 
@@ -463,43 +464,65 @@ class TeamDialog(QDialog):
 
     def __init__(self, host="", name=""):
         super().__init__(None, Qt.WindowType.WindowStaysOnTopHint)
-        self.setWindowTitle("팀 참여")
+        self.setWindowTitle("스페이스 참여")
         form = QFormLayout()
-        self.host = QLineEdit(host, placeholderText="예) 192.168.0.10  (관리자에게 받기)")
+        self.host = QLineEdit(host, placeholderText="예: 192.168.0.10")
         self.code = QLineEdit(placeholderText="XXXX-XXXX-XXXX", maxLength=20)
         form.addRow("호스트 주소", self.host)
         form.addRow("초대장 코드", self.code)
-        name_label = QLabel(f"{name}   (트레이 > 내 이름 에서 바꿈)")
+        name_label = QLabel(name)
         name_label.setTextFormat(Qt.TextFormat.PlainText)
         form.addRow("내 이름", name_label)
         layout = QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(QLabel("초대장은 스페이스 주인이 사람마다 따로 만들어 줍니다.\n"
-                                "15분 안에 한 번만 쓸 수 있습니다. PC 를 바꿨으면 주인에게 다시 초대를 부탁해 주세요."))
+        layout.addWidget(QLabel("호스트 주소와 초대장은 스페이스 주인이 사람마다 따로 알려 줍니다.\n"
+                                "15분 안에 한 번만 쓸 수 있습니다. PC 를 바꿨으면 주인에게 다시 초대를 부탁해 주세요.\n"
+                                "이름은 트레이 > 내 이름 에서 바꿀 수 있습니다."))
         self.error = QLabel()
-        self.error.setStyleSheet("color: #c0392b")
         layout.addWidget(self.error)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.check)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self.handler = None
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.check)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+        self.handler = None   # handler(대화상자, finish): 참여 요청을 보내고 끝나면 finish(오류 문구 또는 None)
+        self.busy = False
         self.setMinimumWidth(380)
 
     def check(self):
+        if self.busy:
+            return
         if not normalize_server(self.host.text()):
             return self.error.setText("호스트 주소를 입력하세요.")
         if not self.code.text().strip():
             return self.error.setText("초대장 코드를 입력하세요.")
-        msg = self.handler(self) if self.handler else None
+        if not self.handler:
+            return self.accept()
+        self.set_busy(True)
+        self.handler(self, self.finish)
+
+    def finish(self, msg):
+        self.set_busy(False)
         if msg:
             self.error.setText(msg)
         else:
             self.accept()
 
+    def set_busy(self, busy):
+        """요청 중에는 입력·버튼을 잠금 (응답이 오기 전에 닫으면 참여는 됐는데 설정에 안 남을 수 있어 취소도 막음)"""
+        self.busy = busy
+        for w in (self.host, self.code, self.buttons):
+            w.setEnabled(not busy)
+        if busy:
+            self.error.setText("연결하는 중입니다.")
+
+    def reject(self):
+        if not self.busy:   # Esc·닫기 단추도 요청 중에는 무시 (http_json 이 몇 초 안에 끝남)
+            super().reject()
+
 
 # ---------------------------------------------------------------- 저장 못 한 노트 보관 (끊김 대비)
 UNSAVED_PATH = os.path.join(CONFIG_DIR, "unsaved.json")
+UNSAVED_MAX = 100   # 노트 하나 = 날짜 하나. 오래 끊겨도 석 달 치는 남게
 _unsaved_lock = threading.Lock()
 
 
@@ -513,19 +536,20 @@ def load_unsaved():
 
 
 def save_unsaved(key, value):
-    """key(스페이스 키|날짜) 의 보관 내용 저장(value = JSON) / 지움(빈 값). 오래된 것부터 50개만 남김"""
+    """key(스페이스 키|날짜) 의 보관 내용 저장(value = JSON) / 지움(빈 값). UNSAVED_MAX 개만 남기고 오래된 것부터 지움.
+    → 지운 개수 (알림용, 조용히 사라지면 보관해 둔 줄 알고 기다리게 됨)"""
     with _unsaved_lock:
         d = load_unsaved()
         if value:
             try:
                 d[key] = json.loads(value)
             except ValueError:
-                return
+                return 0
         elif d.pop(key, None) is None:
-            return
-        if len(d) > 50:
-            for k in sorted(d, key=lambda k: (d[k] or {}).get("at", 0) if isinstance(d[k], dict) else 0)[:len(d) - 50]:
-                del d[k]
+            return 0
+        drop = sorted(d, key=lambda k: (d[k] or {}).get("at", 0) if isinstance(d[k], dict) else 0)[:max(0, len(d) - UNSAVED_MAX)]
+        for k in drop:
+            del d[k]
         try:
             os.makedirs(CONFIG_DIR, exist_ok=True)
             tmp = UNSAVED_PATH + ".tmp"
@@ -534,6 +558,7 @@ def save_unsaved(key, value):
             os.replace(tmp, UNSAVED_PATH)
         except OSError:
             pass
+        return len(drop)
 
 
 # ---------------------------------------------------------------- overlay web view
@@ -592,7 +617,12 @@ class Bridge(QObject):
 
     @Slot(str, str)
     def setUnsaved(self, key, value):
-        save_unsaved(key, value)
+        app = self.win.app
+        # 가득 찬 뒤로는 새 날짜를 보관할 때마다 지우므로 알림은 한 번 켜는 동안 한 번만
+        if save_unsaved(key, value) and not getattr(app, "unsaved_warned", False):
+            app.unsaved_warned = True
+            app.tray.notify(f"저장하지 못한 노트가 {UNSAVED_MAX}개를 넘어 가장 오래된 것을 지웠습니다.\n"
+                            "연결을 확인하고 남은 노트를 저장해 주세요.")
 
     @Slot(str)
     def copyText(self, text):
@@ -1149,7 +1179,7 @@ class doganiApp(QObject):
             return None
         new = not os.path.exists(os.path.join(space.meta_dir(d), "team.json"))
         try:
-            host = TeamHost(d, TEAM_DIR, self.cfg["name"])
+            host = TeamHost(d, TEAM_DIR, self.cfg["name"], e.get("id"))
         except OSError as ex:
             if not quiet:
                 QMessageBox.warning(None, APP_NAME, f"스페이스를 열지 못했습니다.\n{ex}")
@@ -1394,21 +1424,27 @@ class doganiApp(QObject):
         dlg = TeamDialog(last, self.cfg["name"])
         joined = {}
 
-        def handler(d):
+        def handler(d, finish, name=None):
+            # 요청은 작업 스레드에서 (사내망에서 응답이 늦어도 트레이·창이 멈추지 않게), 결과 처리는 메인 스레드에서
             host = normalize_server(d.host.text())
-            name = self.cfg["name"]
-            while True:
-                body = {"code": d.code.text(), "name": name,
-                        "instance": self.share.instance_id if self.share else ""}   # 내 서버면 거부하게
-                status, res = http_json(host, "/api/join", body)
-                if status != 409 or res.get("error") != "name_taken":
-                    break
+            name = name or self.cfg["name"]
+            body = {"code": d.code.text(), "name": name,
+                    "instance": self.share.instance_id if self.share else ""}   # 내 서버면 거부하게
+            self.run_bg(lambda: http_json(host, "/api/join", body),
+                        lambda r: answered(d, finish, host, name, *(r or (0, {}))))
+
+        def answered(d, finish, host, name, status, res):
+            if status == 409 and res.get("error") == "name_taken":
                 # 이름이 겹치면 그 자리에서 다른 이름을 물어 같은 초대장으로 다시 시도
                 name, ok = QInputDialog.getText(d, "이름이 겹침", res.get("message", "") + "\n\n이 스페이스에서 쓸 다른 이름:",
                                                 QLineEdit.EchoMode.Normal, name)
                 name = clean_name(name) if ok else ""
                 if not name:
-                    return "취소했습니다.\n초대장은 15분 안에 다시 쓸 수 있습니다."
+                    return finish("취소했습니다.\n초대장은 15분 안에 다시 쓸 수 있습니다.")
+                return handler(d, finish, name)
+            finish(joined_result(host, status, res))
+
+        def joined_result(host, status, res):
             ok, res = self.team_request_result(host, status, res)
             if not ok:
                 return res
@@ -1667,11 +1703,6 @@ class doganiApp(QObject):
             sid = next(h[0] for h in hosts if h[1] == label)
         self.space_command("new_invite", self.local_host(sid), [])
 
-    @staticmethod
-    def chip_name(v):
-        """달력 칩 이름과 같은 꼴 (JS cleanName: 공백·@·#·쉼표 뺌) — 칩에서 온 이름과 맞춰 보려고"""
-        return "".join(c for c in str(v or "") if not c.isspace() and c not in "@#,，").casefold()
-
     def group_pairs(self):
         """내 PC 스페이스마다 (host, 팀원 목록, 그룹 목록). 그룹 구성은 호스트(관리자)만 바꿀 수 있어 참여 스페이스는 뺌"""
         out = []
@@ -1683,10 +1714,10 @@ class doganiApp(QObject):
 
     def set_group_by_name(self, name, group, on):
         """이름으로 멤버를 그룹에 넣거나 뺌. 같은 이름의 멤버·그룹이 함께 있는 내 PC 스페이스 모두에 적용"""
-        cn, name, group, done = self.chip_name, self.chip_name(name), self.chip_name(group), False
+        name, group, done = name_key(name), name_key(group), False
         for host, ms, gs in self.group_pairs():
-            m = next((m for m in ms if cn(m["name"]) == name), None)
-            g = next((g for g in gs if cn(g["name"]) == group), None)
+            m = next((m for m in ms if name_key(m["name"]) == name), None)
+            g = next((g for g in gs if name_key(g["name"]) == group), None)
             if m and g:
                 host.set_member_group(m["id"], g["id"], on)
                 done = True
@@ -1695,14 +1726,14 @@ class doganiApp(QObject):
 
     def group_pick_menu(self, kind, name):
         """마우스 자리에 체크 메뉴: 멤버 → 그룹들, 그룹 → 멤버들. 고르면 넣기·빼기 전환"""
-        rows, cn, key = {}, self.chip_name, self.chip_name(name)   # rows: 메뉴 글자 → 지금 들어 있음
+        rows, key = {}, name_key(name)   # rows: 메뉴 글자 → 지금 들어 있음
         for host, ms, gs in self.group_pairs():
             if kind == "member":
-                m = next((m for m in ms if cn(m["name"]) == key), None)
+                m = next((m for m in ms if name_key(m["name"]) == key), None)
                 for g in gs if m else ():
                     rows[g["name"]] = rows.get(g["name"], False) or g["id"] in m["group_ids"]
             else:
-                g = next((g for g in gs if cn(g["name"]) == key), None)
+                g = next((g for g in gs if name_key(g["name"]) == key), None)
                 for m in ms if g else ():
                     rows[m["name"]] = rows.get(m["name"], False) or g["id"] in m["group_ids"]
         if not rows:

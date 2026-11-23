@@ -38,6 +38,29 @@ def is_schedule_file(name):
     return bool(SCHEDULE_FILE_RE.match(name))
 
 
+def name_key(name):
+    """@이름 비교용 (팀원·그룹 이름 겹침, ~id 붙이기, 달력 칩): 공백·@·#·쉼표를 빼고 소문자.
+    @이름 은 띄어 쓸 수 없어 '전 산' 은 달력에 @전산 으로 적힘. JS calendar.js nameKey 와 같은 규칙"""
+    return re.sub(r"[@#,，\s]", "", str(name or "")).lower()
+
+
+def _head(plain):
+    """머리 칸(기호 뺀 날짜 칸) → (open_, 시작 글자, 끝 글자, 날짜 뒤 글자). 날짜로 시작하지 않으면 None"""
+    if m := _OPEN_START_RE.match(plain):
+        return "start", None, m[1], m[2]
+    if m := _OPEN_END_RE.match(plain):
+        return "end", m[1], None, m[2]
+    if m := _FIRST_RE.match(plain):
+        return "", m[1], m[2], m[3]
+    return None
+
+
+def _title_in_head(time):
+    """날짜 뒤 글자가 시간이 아니면 제목 ("261119 과제 실사, ...") → 다음 칸부터 태그·장소"""
+    time = time.strip()
+    return bool(time) and not _TIME_RE.match(time)
+
+
 def _date(text):
     if "-" in text:
         return dt.date.fromisoformat(text)
@@ -81,27 +104,27 @@ def parse_line(line):
     important = "**" in head
     italic = bool(re.search(r"(?<!\*)\*(?!\*)", head.replace("***", "*")))  # *기울임* (***굵게+기울임*** 포함)
     plain = _MARK_RE.sub("", head).strip()
-    open_ = ""
+    head = _head(plain)
+    if not head:
+        return None
+    open_, s, e, time = head
     try:
-        if m := _OPEN_START_RE.match(plain):
+        if open_ == "start":
             # 달력엔 마감 전날부터 그려서 앞쪽이 페이드로 들어오게
-            open_, end = "start", _date(m[1])
-            start, time = end - dt.timedelta(days=1), m[2]
-        elif m := _OPEN_END_RE.match(plain):
-            open_, start = "end", _date(m[1])
-            end, time = start + dt.timedelta(days=1), m[2]
-        elif m := _FIRST_RE.match(plain):
-            start = _date(m[1])
-            end = _end_date(m[2], start) if m[2] else start
-            time = m[3]
+            end = _date(e)
+            start = end - dt.timedelta(days=1)
+        elif open_ == "end":
+            start = _date(s)
+            end = start + dt.timedelta(days=1)
         else:
-            return None
+            start = _date(s)
+            end = _end_date(e, start) if e else start
     except ValueError:
         return None
     if end < start:
         start, end = end, start
     time = time.strip()
-    if time and not _TIME_RE.match(time):
+    if _title_in_head(time):
         # 날짜 뒤가 시간이 아니면 제목으로 본다 ("261119 과제 실사, ...")
         fields.insert(1, time)
         time = ""
@@ -145,21 +168,24 @@ def parse_line(line):
 
 
 def _tag_member_ids(body, ids):
-    """태그 칸(#·@ 로 시작하는 칸)의 id 없는 @이름 중 팀원 이름(대소문자 무시)과 같은 것에 ~id 를 붙임"""
+    """태그 칸(제목 다음의 #·@ 로 시작하는 칸)의 id 없는 @이름 중 팀원 이름(name_key)과 같은 것에 ~id 를 붙임.
+    제목 칸은 '@홍길동 면담' 처럼 @ 로 시작해도 글자 그대로 둠"""
     def field(f):
         if _MARK_RE.sub("", f).strip()[:1] not in ("#", "@"):
             return f
         return re.sub(r"(?<!\S)@([^\s~]+)(?!\S)",
-                      lambda m: f"@{m[1]}~{ids[m[1].casefold()]}" if m[1].casefold() in ids else m[0], f)
+                      lambda m: f"@{m[1]}~{ids[name_key(m[1])]}" if name_key(m[1]) in ids else m[0], f)
     parts = re.split(r"([,，])", body)   # [첫 칸, 구분자, 칸, 구분자, 칸 ...]
-    return "".join(field(x) if j and j % 2 == 0 else x for j, x in enumerate(parts))
+    head = _head(_MARK_RE.sub("", _LIST_RE.sub("", parts[0].strip(), count=1)).strip())
+    first = 2 if head and _title_in_head(head[3]) else 4   # 첫 태그 칸 자리 (제목이 머리 칸에 있으면 바로 다음 칸)
+    return "".join(field(x) if j >= first and j % 2 == 0 else x for j, x in enumerate(parts))
 
 
 def stamp(old, new, mid, ids=None):
     """팀스페이스 일정 파일 저장 전: old 에 글자 그대로 없는 일정 줄에 작성자 꼬리표를 붙임.
     꼬리표 없는 줄 = 새로 씀 → " ~mid", 꼬리표 있는 줄 = 고침(달력 수정이 원래 꼬리표를 넘김) → " ~작성id>mid".
     그대로이거나 옮기기만 한 줄은 안 건드림. 지운 줄은 꼬리표도 같이 사라짐.
-    ids = {이름.casefold(): 팀원id} 이면 바뀐 줄의 @이름 에 ~id 를 붙임"""
+    ids = {name_key(이름): 팀원id} 이면 바뀐 줄의 @이름 에 ~id 를 붙임"""
     keep = {l.strip() for l in (old or "").splitlines()}
     out = []
     for line in new.splitlines(keepends=True):

@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import os
 import sys
+import threading
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -14,6 +15,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "app"))
 import holidays  # noqa: E402
 import schedule  # noqa: E402
 import server  # noqa: E402
+import team  # noqa: E402
 
 with open(os.path.join(HERE, "fixtures", "shared.json"), encoding="utf-8") as f:
     SHARED = json.load(f)
@@ -30,6 +32,11 @@ class SharedTest(unittest.TestCase):
                 ev = P(c["line"])
                 self.assertIsNotNone(ev)
                 self.assertEqual({k: ev[k] for k in c["ev"]}, c["ev"])
+
+    def test_name_key(self):
+        """@이름 비교 규칙: 팀원 이름 겹침(team)·~id 붙이기(stamp)·달력 칩(JS nameKey)이 같은 답"""
+        for c in SHARED["names"]:
+            self.assertEqual(schedule.name_key(c["in"]), c["key"], c["in"])
 
     def test_regex_lines(self):
         for c in SHARED["lines"]:
@@ -134,6 +141,21 @@ class StampTest(unittest.TestCase):
         self.assertEqual(f("**261120**, 제목, @홍길동", ids), "**261120**, 제목, @홍길동~1a2b3c4d")
         self.assertEqual(f("261120, 제목, ==@홍길동==", ids), "261120, 제목, ==@홍길동==")   # 표시 기호 붙은 이름은 그대로
         self.assertEqual(f("261120，제목，@홍길동", ids), "261120，제목，@홍길동~1a2b3c4d")
+        # 제목 칸은 @ 로 시작해도 그대로 (날짜 뒤에 바로 제목이 오면 그다음 칸부터 태그 칸)
+        self.assertEqual(f("261120, @홍길동 면담", ids), "261120, @홍길동 면담")
+        self.assertEqual(f("261120 10:00, @홍길동 면담, @홍길동", ids), "261120 10:00, @홍길동 면담, @홍길동~1a2b3c4d")
+        self.assertEqual(f("261120 면담, @홍길동", ids), "261120 면담, @홍길동~1a2b3c4d")
+        self.assertEqual(f("- [ ] 261120, @홍길동", ids), "- [ ] 261120, @홍길동")
+
+    def test_member_ids_spaced_name(self):
+        """띄어 쓴 팀원 이름·대소문자 다른 이름도 달력에 적히는 꼴(@전산·@kim)로 찾아 ~id"""
+        host = team.TeamHost.__new__(team.TeamHost)
+        host.lock = threading.Lock()
+        host.data = {"members": {"1a2b3c4d": {"name": "전 산"}, "0badf00d": {"name": "Kim"}},
+                     "groups": {"9e9e9e9e": {"name": "IT 팀"}}}
+        ids = host.member_ids()
+        out = schedule.stamp("", "261120, 회의, @전산 @kim @IT팀\n", "bbbbbbbb", ids)
+        self.assertEqual(out, "261120, 회의, @전산~1a2b3c4d @kim~0badf00d @IT팀~9e9e9e9e ~bbbbbbbb\n")
 
 
 class NoteTest(unittest.TestCase):

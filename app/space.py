@@ -69,14 +69,22 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
-def open_space(root):
-    """폴더를 스페이스로 연다. .dogani/space.json 이 없으면 만든다 → 스페이스 설정 dict (id 포함). 폴더가 없으면 OSError"""
+def valid_id(v):
+    """스페이스 id 모양 (키 파일 이름에 쓰임 → 경로 문자 금지)"""
+    return bool(re.fullmatch(r"[0-9a-f]{16}", str(v or "")))
+
+
+def open_space(root, known_id=None):
+    """폴더를 스페이스로 연다. .dogani/space.json 이 없으면 만든다 → 스페이스 설정 dict (id 포함). 폴더가 없으면 OSError.
+    known_id = 이 PC 설정에 적힌 그 폴더의 id: space.json 이 깨지거나 지워졌으면 새 id 대신 이것으로 되살림
+    (id 가 바뀌면 키 파일·팀원 토큰·참여 주소 /api/s/<id> 가 모두 끊김)"""
     if not root or not os.path.isdir(root):
         raise OSError(f"폴더가 없습니다: {root}")
     path = os.path.join(meta_dir(root), SPACE_FILE)
     data = load_json(path) or {}
-    if not re.fullmatch(r"[0-9a-f]{16}", str(data.get("id", ""))):   # 키 파일 이름에 쓰임 → 경로 문자 금지
-        data = {"created": dt.datetime.now().isoformat(timespec="seconds"), **data, "id": secrets.token_hex(8)}
+    if not valid_id(data.get("id")):
+        sid = known_id if valid_id(known_id) else secrets.token_hex(8)
+        data = {"created": dt.datetime.now().isoformat(timespec="seconds"), **data, "id": sid}
         write_json(path, data)
     return data
 

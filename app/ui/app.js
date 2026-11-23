@@ -36,7 +36,7 @@
     groupsBySpace: {},  // 스페이스 키 → 멤버 그룹 [{name, members: [{name, perm}]}] (사이드바 그룹 칩)
     calHidden: new Set(), // 달력·할일 일정에서 숨긴 스페이스 키 (설정 cal_hidden, 창끼리 같이 씀)
     evBySpace: {},     // 스페이스 키 → /schedule 일정 목록
-    tasksBySpace: {},  // 스페이스 키 → /schedule 의 날짜 붙은 할일 (개인 스페이스만 옴)
+    tasksBySpace: {},  // 스페이스 키 → /schedule 의 날짜 붙은 할일 (내 스페이스만 옴. 참여 스페이스는 [])
     decoBySpace: {},   // 스페이스 키 → /schedule 의 장식 줄 (일정 파일 "261119 ✦ 글자")
     roSpaces: new Set(), // 읽기만 허용된 스페이스 키 (팀 관리자가 편집 허용을 끔. /schedule 의 writable)
     sched: null,       // 일정 색인 (CAL.index)
@@ -67,8 +67,8 @@
     blocked: "로그인이 풀렸습니다. 트레이 > 스페이스에서 초대장으로 다시 참여해 주세요.",
     not_member: "이 스페이스의 팀원이 아닙니다. 트레이 > 다른 스페이스에 참여하기 로 들어와 주세요.",
     no_space: "그 PC 에 이 스페이스가 없습니다.",
-    client_only: "접속 키가 맞지 않습니다. (dogani 버전 확인)",
-    conflict: "그 사이 다른 곳(옵시디언·다른 팀원)에서 수정되어 저장하지 않았습니다. 다시 불러옵니다.",
+    client_only: "접속 키가 맞지 않습니다. 두 PC 의 dogani 버전을 확인해 주세요.",
+    conflict: "그 사이 옵시디언이나 다른 팀원이 수정해서 저장하지 않았습니다. 다시 불러옵니다.",
     read_only: "편집 권한이 없습니다.",
     write_failed: "저장에 실패했습니다.",
   };
@@ -108,7 +108,7 @@
       const dates = JSON.parse(e.data).dates || [];
       if (state.mode === "note" && dates.includes(state.noteDate)) note.reloadIfIdle();
       if (state.mode === "cal" && dates.some((d) => d.startsWith(state.calYM))) loadMonth(true);
-      // 노트가 바뀌면 날짜 붙은 할일(달력에 비친 것)도 바뀜 → 일정 다시 읽기 (개인 스페이스만 할일이 옴)
+      // 노트가 바뀌면 날짜 붙은 할일(달력에 비친 것)도 바뀜 → 일정 다시 읽기 (할일은 내 스페이스만 옴)
       if (dates.length && state.space && state.space.kind === "me") loadSchedule();
     });
     es.addEventListener("reload", () => { loadSchedule(); refresh(); });
@@ -224,11 +224,12 @@
     }
     list.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
     state.schedAll = list;   // 태그로 거르기 전 (태그 필터 목록을 만들 때 씀)
-    // 노트의 날짜 붙은 할일: 일정처럼 그리지만 원본은 노트 줄 (태그·멤버 체크와 상관없이 보임)
+    // 노트의 날짜 붙은 할일: 일정처럼 그리지만 원본은 노트 줄 (태그·멤버 체크와 상관없이 보임). 내 스페이스 것만
+    // (예전 호스트는 참여 스페이스에도 tasks 를 보냈음)
     // 전날 못 한 할일을 다음 날 노트에 복사해 쓰는 경우: 같은 제목·같은 예정 날짜면 가장 최근 노트의 줄 하나만 (그 줄이 지금 상태)
     // 완료(✅ 날짜)면 예정 날짜 대신 완료한 날 하루에 그림
     const tasks = [], latest = new Map();
-    for (const sp of shown) {
+    for (const sp of shown.filter((s) => s.kind === "me")) {
       for (const t of state.tasksBySpace[sp.key] || []) {
         const id = sp.key + "|" + t.title + "|" + t.start + "|" + t.end, prev = latest.get(id);
         if (!prev || t.note > prev.note || (t.note === prev.note && t.line > prev.line)) latest.set(id, { ...t, sp: sp.key });
@@ -247,7 +248,7 @@
     state.decos = decos;
     state.schedItems = [...list.filter((ev) => tagShown(ev) && memberShown(ev)), ...tasks];
     ensureHolidays();
-    state.sched = CAL.index(state.schedItems, state.holidays, cleanName(state.myName));
+    state.sched = CAL.index(state.schedItems, state.holidays, state.myName);
     if (state.mode === "cal" && state.calView === "month") renderMonth();
     if (state.mode === "note") renderSchedRow();
   }
@@ -306,52 +307,47 @@
   }
 
   // ------------------------------------------------------------ 멤버 필터 (일정 줄의 @이름. 숨긴 멤버 = calHidden 안의 "@이름", "@" = 멤버 없는 일정)
-  // 이름 글자로만 맞춤 (팀원 id 와 묶지 않음): 같은 이름 = 같은 사람, 팀원 아닌 이름도 됨
+  // 이름 글자로만 맞춤 (팀원 id 와 묶지 않음): 같은 nameKey = 같은 사람, 팀원 아닌 이름도 됨. 숨김 키는 "@" + nameKey
   const NO_MEMBER = "@";
-  const cleanName = (v) => String(v || "").replace(/[@#,，\s]/g, "");
+  const { cleanName, nameKey, uniqNames } = CAL;
+  const memKey = (m) => "@" + nameKey(m);
   function memberShown(ev) {
     // reach = @그룹·@all 을 펼친 팀원 이름 (팀스페이스): 그룹 일정도 그 그룹원 칩으로 보이고 숨겨짐
     const ms = ev.reach ? [...(ev.members || []), ...ev.reach] : ev.members || [];
-    return ms.length ? ms.some((m) => !state.calHidden.has("@" + m)) : !state.calHidden.has(NO_MEMBER);
+    return ms.length ? ms.some((m) => !state.calHidden.has(memKey(m))) : !state.calHidden.has(NO_MEMBER);
   }
   /** 모든 스페이스 팀원 이름 (스페이스마다 따로 받아 합침) */
   const teamNames = () => Object.values(state.membersBySpace).flat();
   /** 고를 수 있는 멤버: 나 → 팀원 → 보이는 달 일정에 적힌 이름 (중복 없이) */
-  function memberPicks() {
-    const out = [];
-    for (const n of [state.myName, ...teamNames(), ...shownTags("members")]) {
-      const c = cleanName(n);
-      if (c && !out.includes(c)) out.push(c);
-    }
-    return out;
-  }
-  /** 모든 스페이스의 멤버 그룹 (같은 이름은 구성원을 합침) → {이름: [{name, perm}]} */
+  const memberPicks = () => uniqNames([state.myName, ...teamNames(), ...shownTags("members")]);
+  /** 모든 스페이스의 멤버 그룹 (같은 nameKey 는 처음 이름으로 구성원을 합침) → {이름: [{name, perm}]} */
   function allGroups() {
-    const out = {};
+    const out = {}, names = {};   // names: nameKey → out 의 이름
     for (const gs of Object.values(state.groupsBySpace)) for (const g of gs) {
-      const k = cleanName(g.name), list = out[k] || (out[k] = []);
+      const k = names[nameKey(g.name)] || (names[nameKey(g.name)] = cleanName(g.name)), list = out[k] || (out[k] = []);
       for (const m of g.members) if (!list.some((x) => x.name === m.name)) list.push(m);
     }
     return out;
   }
   const GROUP_ICON = '<svg class="person-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.5" cy="5" r="2.5"/><circle cx="11" cy="5.5" r="2.2"/><path d="M0.5 14.5c0-2.9 2.2-4.8 5-4.8s5 1.9 5 4.8z"/><path d="M11.5 14.5c0-1.8-.6-3.3-1.7-4.3.4-.1.8-.2 1.2-.2 2.5 0 4.5 1.7 4.5 4.5z"/></svg>';
   const PERSON_ICON = '<svg class="person-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="3"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z"/></svg>';
-  const meMark = (m) => (m === cleanName(state.myName) ? " (나)" : "");
+  const meMark = (m) => (nameKey(m) === nameKey(state.myName) ? " (나)" : "");
   function renderMemberFilter() {
     const box = $("cal-members"), found = shownTags("members");
     // 스페이스 실제 멤버(나·팀원)를 앞에, 일정에만 적힌 이름은 뒤에
     // 멤버 그룹은 사람 칩과 따로: 그룹 칩은 #cal-groups 묶음 (일정에 안 적혀도 늘 보임), all 은 칩 없음
-    const groups = allGroups(), isGroup = (n) => n in groups || n.toLowerCase() === "all";
-    const real = [state.myName, ...teamNames()].map(cleanName).filter((n, i, a) => n && a.indexOf(n) === i && !isGroup(n));
-    const ms = [...real.filter((n) => found.includes(n)), ...found.filter((n) => !real.includes(n) && !isGroup(n))];
+    const groups = allGroups(), gks = new Set([...Object.keys(groups), "all"].map(nameKey));
+    const isGroup = (n) => gks.has(nameKey(n)), has = (list, n) => list.some((x) => nameKey(x) === nameKey(n));
+    const real = uniqNames([state.myName, ...teamNames()]).filter((n) => !isGroup(n));
+    const ms = [...real.filter((n) => has(found, n)), ...uniqNames(found).filter((n) => !has(real, n) && !isGroup(n))];
     const gs = Object.keys(groups).sort();
     // 멤버 그룹은 따로 묶음 (#cal-groups). 숨김 키는 멤버와 같은 "@이름"
     const gbox = $("cal-groups");
     gbox.hidden = !gs.length;
-    gbox.innerHTML = gs.map((g) => `<label class="mem-group"><input type="checkbox" data-mem="${esc(g)}"${state.calHidden.has("@" + g) ? "" : " checked"}>` +
+    gbox.innerHTML = gs.map((g) => `<label class="mem-group"><input type="checkbox" data-mem="${esc(g)}"${state.calHidden.has(memKey(g)) ? "" : " checked"}>` +
       `${GROUP_ICON}<span class="chip-t">${esc(g)}</span></label>`).join("");
     box.hidden = !ms.length && !state.calHidden.has(NO_MEMBER);
-    box.innerHTML = ms.map((m) => `<label${real.includes(m) ? ' class="mem-real"' : ""}><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has("@" + m) ? "" : " checked"}>` +
+    box.innerHTML = ms.map((m) => `<label${real.includes(m) ? ' class="mem-real"' : ""}><input type="checkbox" data-mem="${esc(m)}"${state.calHidden.has(memKey(m)) ? "" : " checked"}>` +
       `${PERSON_ICON}<span class="chip-t" title="${esc(m)}">${esc(m)}${meMark(m)}</span></label>`).join("") +
       `<label class="no-tag"><input type="checkbox" data-mem=""${state.calHidden.has(NO_MEMBER) ? "" : " checked"}>멤버 없는 일정</label>`;
   }
@@ -745,8 +741,8 @@
     empty(d) {
       if (d.no_dir) {
         return state.writable && state.space.kind === "me"
-          ? "todo 폴더가 지정되지 않았습니다.<br>트레이 &gt; todo 경로 &gt; 찾아보기..."
-          : "상대방이 todo 폴더를 지정하지 않았습니다.";
+          ? "스페이스 폴더가 지정되지 않았습니다.<br>트레이의 스페이스 메뉴 &gt; 대상 폴더 변경하기... 에서 골라 주세요."
+          : "그 PC 에서 스페이스 폴더가 지정되지 않았습니다.";
       }
       return state.writable ? `이 날짜의 노트가 없습니다.<br>클릭해서 작성${copyButton(d)}` : "이 날짜의 노트가 없습니다.";
     },
@@ -943,7 +939,7 @@
     const time = o.t1 ? " " + o.t1 + (o.t2 ? "-" + o.t2 : "") + (o.about ? "?" : "") : "";
     const parts = [mk + date + mk + time, cleanField(o.title)];
     const tags = o.tags.map((t) => t.replace(/[#\s]/g, "")).filter(Boolean).map((t) => "#" + t);
-    const ms = [...new Set((o.members || []).map(cleanName).filter(Boolean))].map((m) => "@" + m);
+    const ms = uniqNames(o.members).map((m) => "@" + m);
     if (tags.length || ms.length) parts.push([...tags, ...ms].join(" "));   // 태그 칸: "#근태 @홍길동"
     const place = cleanField(o.place), memo = cleanField(o.memo);
     if (place || memo) parts.push(place);  // 장소 없이 메모만이면 "제목, , 메모"
@@ -953,7 +949,7 @@
   /** 근태 줄 "==날짜==, 제목, @사람" (태그 없음. 사람 없으면 모두 쉬는 날) */
   function offLine(o) {
     const date = o.s && o.e && o.s !== o.e ? `${yymmdd(o.s)}-${yymmdd(o.e)}` : yymmdd(o.s || o.e);
-    const ms = [...new Set((o.members || []).map(cleanName).filter(Boolean))];
+    const ms = uniqNames(o.members);
     const parts = [`==${date}==`, cleanField(o.title)];
     const tagCol = ms.map((m) => "@" + m).join(" ");
     const memo = cleanField(o.memo);
@@ -1571,7 +1567,7 @@
   for (const box of [$("cal-members"), $("cal-groups")]) box.addEventListener("change", (e) => {
     const m = e.target.dataset.mem;
     if (m === undefined) return;
-    const key = "@" + m;
+    const key = memKey(m);   // "" = 멤버 없는 일정 → "@"
     if (e.target.checked) state.calHidden.delete(key); else state.calHidden.add(key);
     if (bridge) bridge.setCalHidden(JSON.stringify([...state.calHidden]));
     rebuildSched();
@@ -1579,8 +1575,8 @@
   // 칩 강조: 칩 사이 틈·꺼진 칩·태그 없는 칩 = 하던 강조 그대로 (줄 밖으로 나가야 풀림). 같은 칩 안 이동은 무시
   let hoverKey = null;
   const CHIP_BOXES = ["cal-groups", "cal-members", "cal-tags"];
-  /** 그룹 g 에 멤버 m 이 드는가 (이름은 cleanName 으로 맞춤) */
-  const inGroup = (g, m) => (allGroups()[g] || []).some((x) => cleanName(x.name) === m);
+  /** 그룹 g 에 멤버 m 이 드는가 (이름은 nameKey 로 맞춤) */
+  const inGroup = (g, m) => (allGroups()[g] || []).some((x) => nameKey(x.name) === nameKey(m));
   const memOf = (l) => { const i = l.querySelector("input[data-mem]"); return i ? i.dataset.mem : null; };
   /** 칩 줄 강조: pred 에 맞는 칩만 그대로, 나머지는 옅게 (스타일은 .hl·.hl-cur) */
   function markChips(box, pred) {
@@ -1617,7 +1613,7 @@
     // 실제 멤버 = 넣을 멤버 그룹 고르기 (트레이 프로그램이 메뉴를 띄움. 내 PC 스페이스만)
     if (m && lab.classList.contains("mem-real") && bridge && bridge.groupMenu) return bridge.groupMenu("member", m);
     if (!m || lab.classList.contains("mem-real") || !bridge || !bridge.inviteFor) return;
-    const keys = schedSpaces().filter((sp) => (state.evBySpace[sp.key] || []).some((ev) => (ev.members || []).includes(m))).map((sp) => sp.key);
+    const keys = schedSpaces().filter((sp) => (state.evBySpace[sp.key] || []).some((ev) => (ev.members || []).some((x) => nameKey(x) === nameKey(m)))).map((sp) => sp.key);
     bridge.inviteFor(m, JSON.stringify(keys));
   });
   // 그룹 칩 우클릭 = 그 그룹에 넣을 멤버 고르기
@@ -1633,7 +1629,9 @@
     const on = tag != null;   // "" = 태그(멤버) 없는 일정
     // 그룹 = @그룹 을 적은 일정 + 그 구성원 일정
     const grp = on && field === "members" && !!tag && tag in allGroups();
-    const hit = (v) => v === tag || (grp && inGroup(tag, v));
+    // 멤버는 칩 숨김처럼 nameKey 로 맞춤 (@Kim·@kim·@K im 이 칩 하나), 태그는 글자 그대로
+    const same = field === "members" ? (v) => nameKey(v) === nameKey(tag) : (v) => v === tag;
+    const hit = (v) => same(v) || (grp && inGroup(tag, v));
     grid.classList.toggle("sp-hover", on);
     if (on) grid.style.setProperty("--spc", field === "tags" && tag ? tagColor(tag) : "var(--accent)");
     for (const el of grid.querySelectorAll(".ev[data-k]")) {
@@ -1763,20 +1761,22 @@
   /** 일정 ev 에 칩이 이미 다 붙었나 (근태의 태그는 셈에서 뺌) */
   const evHasChips = (ev, items) => items.every((c) => c.kind === "tag"
     ? ev.off || (ev.tags || []).includes(c.name)
-    : (ev.members || []).map(cleanName).includes(cleanName(c.name)));
+    : (ev.members || []).map(nameKey).includes(nameKey(c.name)));
   /**
    * 일정 ev 에 칩들 더하기(remove = 빼기): 멤버·그룹 = @이름, 태그 = #태그 (근태 줄엔 태그 칸이 없어 태그는 무시).
    * 바뀐 게 없으면 저장 안 함
    */
   async function addChipsToEv(ev, items, remove = false) {
-    const o = evToObj(ev), ms = new Set(o.members.map(cleanName)), ts = new Set(o.tags);
+    const o = evToObj(ev), ts = new Set(o.tags);
+    const ms = new Map(uniqNames(o.members).map((m) => [nameKey(m), m]));   // nameKey → 적힌 이름
     const n0 = ms.size + ts.size;
     for (const c of items) {
       if (c.kind === "tag") { if (!ev.off) ts[remove ? "delete" : "add"](c.name); }
-      else ms[remove ? "delete" : "add"](cleanName(c.name));
+      else if (remove) ms.delete(nameKey(c.name));
+      else if (!ms.has(nameKey(c.name))) ms.set(nameKey(c.name), cleanName(c.name));
     }
     if (ms.size + ts.size === n0) return;
-    o.members = [...ms]; o.tags = [...ts];
+    o.members = [...ms.values()]; o.tags = [...ts];
     await writeEv(ev, schedLine(o), (ev.spaces || []).filter((k) => canEdit({ spaces: [k] })));
   }
   // 태그 칩 우클릭 = 이름 일괄 변경: 쓸 수 있는 모든 스페이스 일정 파일의 "#옛이름" 을 "#새이름" 으로 (이미 있는 태그면 합쳐짐)

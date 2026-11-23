@@ -126,14 +126,16 @@ class UnsavedTest(TempHome):
         self.assertEqual(dogani.load_unsaved(), {})
         dogani.save_unsaved("none", "")          # 없는 키 지우기 = 아무 일 없음
 
-    def test_keep_newest_50(self):
-        for i in range(55):
-            dogani.save_unsaved(f"k{i}", json.dumps({"at": 1000 + i}))
-        dogani.save_unsaved("old-shape", json.dumps("글자만"))   # dict 가 아니면 가장 오래된 것으로 침
+    def test_keep_newest(self):
+        self.assertEqual(dogani.UNSAVED_MAX, 100)
+        for i in range(dogani.UNSAVED_MAX + 4):
+            self.assertEqual(dogani.save_unsaved(f"k{i}", json.dumps({"at": 1000 + i})), 1 if i >= 100 else 0)
+        # dict 가 아니면 가장 오래된 것으로 침 → 넣자마자 지워짐 (지운 개수 = 알림)
+        self.assertEqual(dogani.save_unsaved("old-shape", json.dumps("글자만")), 1)
         d = dogani.load_unsaved()
-        self.assertEqual(len(d), 50)
+        self.assertEqual(len(d), 100)
         self.assertNotIn("old-shape", d)
-        self.assertEqual(min(v["at"] for v in d.values()), 1005)   # 1000~1004 는 이미 밀려남
+        self.assertEqual(min(v["at"] for v in d.values()), 1004)   # 1000~1003 은 이미 밀려남
 
     def test_broken_file(self):
         with open(dogani.UNSAVED_PATH, "w", encoding="utf-8") as f:
@@ -217,6 +219,30 @@ class LatestTagTest(unittest.TestCase):
             self.assertEqual(updater.latest_tag(), "v26.11.21.02")
         with mock.patch.object(updater, "_get", lambda url, timeout: b"{"):
             self.assertIsNone(updater.latest_tag())
+
+    def test_next_pages(self):
+        """100개가 꽉 찬 쪽이면 다음 쪽도 봄 (순서 약속 없음 → 최신이 뒤쪽에 있어도 찾음), TAG_PAGES 쪽까지만"""
+        pages = {1: [{"name": f"v26.01.01.{i:02d}"} for i in range(100)], 2: [{"name": "v26.11.23.01"}]}
+        seen = []
+        def get(url, timeout):
+            n = int(url.rsplit("page=", 1)[1])
+            seen.append(n)
+            return json.dumps(pages.get(n, [])).encode()
+        with mock.patch.object(updater, "_get", get):
+            self.assertEqual(updater.latest_tag(), "v26.11.23.01")
+        self.assertEqual(seen, [1, 2])
+        full = [{"name": "v26.01.01.01"}] * 100
+        seen.clear()
+        with mock.patch.object(updater, "_get", lambda url, timeout: seen.append(1) or json.dumps(full).encode()):
+            self.assertEqual(updater.latest_tag(), "v26.01.01.01")
+        self.assertEqual(len(seen), updater.TAG_PAGES)
+        # 둘째 쪽이 실패하면 첫 쪽 결과로, 이름이 null 이어도 예외 없이
+        def flaky(url, timeout):
+            if url.endswith("page=2"):
+                raise OSError("timeout")
+            return json.dumps(full[:99] + [{"name": None}]).encode()
+        with mock.patch.object(updater, "_get", flaky):
+            self.assertEqual(updater.latest_tag(), "v26.01.01.01")
 
 
 class LauncherUpdateTest(unittest.TestCase):

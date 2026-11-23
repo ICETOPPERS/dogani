@@ -90,6 +90,14 @@ class SyncTest(unittest.TestCase):
         self.assertIn("점검", [e["title"] for e in sch["events"]])
         self.assertIn("동료", sch["members"])
 
+    def test_tasks_owner_only(self):
+        """노트의 날짜 붙은 할일은 주인 달력에만, 팀원 /schedule 의 tasks 는 빈 목록"""
+        st, _ = self.owner.call("/note", {"date": "2026-11-20", "content": "- [ ] 보고서 📅 2026-11-25\n",
+                                          "base_mtime": None})
+        self.assertEqual(st, 200)
+        self.assertEqual([t["title"] for t in self.owner.call("/schedule")[1]["tasks"]], ["보고서"])
+        self.assertEqual(self.guest.call("/schedule")[1]["tasks"], [])
+
     def test_no_token_rejected(self):
         st, _ = Client(self.base, self.host.space_id, token="").call("/sched-doc")
         self.assertEqual(st, 401)
@@ -322,6 +330,20 @@ class BrokenFileTest(unittest.TestCase):
         self.assertEqual(len(self.backups(sp)), 1)
         self.assertEqual(len(self.backups(tj)), 1)
         self.assertEqual(space.read_json(sp)["id"], host.space_id)   # 새 파일은 정상으로 다시 씀
+
+    def test_broken_space_keeps_known_id(self):
+        """space.json 이 깨져도 PC 설정에 적힌 id 로 되살림 → 서명 키(키 파일)·팀원 토큰이 그대로"""
+        root, keys = os.path.join(self.tmp, "space"), os.path.join(self.tmp, "keys")
+        os.makedirs(root)
+        os.makedirs(keys)
+        host = team.TeamHost(root, keys, "주인")
+        sid, pub = host.space_id, host.pub
+        sp = self.write("space/.dogani/space.json", "{broken")
+        again = team.TeamHost(root, keys, "주인", known_id=sid)
+        self.assertEqual((again.space_id, again.pub), (sid, pub))
+        self.assertEqual(space.read_json(sp)["id"], sid)
+        self.write("space/.dogani/space.json", "{broken")
+        self.assertNotEqual(team.TeamHost(root, keys, "주인", known_id="../x").space_id, sid)   # 이상한 id 는 안 씀
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ from functools import lru_cache
 
 import ed25519
 import space
+from schedule import name_key
 
 INVITE_TTL = 15 * 60    # 초대장 유효 시간(초)
 INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # 헷갈리는 0/O, 1/I 제외
@@ -38,7 +39,7 @@ FAIL_LIMIT = 5
 FAIL_LOCK = 60          # 초
 ONLINE_WINDOW = 75      # 마지막 신호가 이 안이면 접속 중 (클라이언트는 20초마다 보냄)
 NAME_MAX = 20
-ALL_NAME = "all"        # @all = 팀원 모두 (예약된 이름, casefold 로 비교)
+ALL_NAME = "all"        # @all = 팀원 모두 (예약된 이름, name_key 로 비교)
 
 SCHEDULE_SEED = """# 팀 일정
 
@@ -101,11 +102,6 @@ def format_invite(code):
     return "-".join(code[i:i + 4] for i in range(0, len(code), 4))
 
 
-def _key(name):
-    """이름 비교용: 대소문자·띄어쓰기 무시 (달력은 @이름 의 띄어쓰기를 지우므로 '전 산' 과 '전산' 은 같은 @전산)"""
-    return "".join(str(name or "").split()).casefold()
-
-
 def _taken(other):
     """_find_name 결과 → 이름 겹침 오류 문구 ("" = 그룹 이름·all)"""
     if other == "":
@@ -126,18 +122,23 @@ class TeamError(Exception):
         self.status = status
 
 
+def bad_code():
+    """틀린·만료된 초대장 (어느 스페이스에도 없는 코드도 같은 답: 어떤 코드가 있는지 알 수 없게)"""
+    return TeamError("bad_code", "초대장 코드가 맞지 않거나 만료됐습니다.\n15분 안에 한 번만 쓸 수 있습니다.", 401)
+
+
 # ---------------------------------------------------------------- host
 class TeamHost:
     """팀스페이스 + 팀 데이터: 스페이스/.dogani/team.json(이름·팀원) + 키 파일(서명 키·초대장, 이 PC 에만)"""
 
     PRIVATE = ("sign_key", "invites")   # 스페이스에 두지 않는 값
 
-    def __init__(self, root, key_dir, owner_name):
+    def __init__(self, root, key_dir, owner_name, known_id=None):
         from server import Hub, NoteStore  # 순환 import 방지
         self.lock = threading.Lock()
         self.root = root
         fresh = not any(n != space.META_DIR for n in os.listdir(root))   # 새로 만든 빈 폴더
-        meta = space.open_space(root)
+        meta = space.open_space(root, known_id)   # known_id: space.json 이 깨졌을 때 되살릴 id (PC 설정)
         self.space_id = meta["id"]
         self.path = os.path.join(space.meta_dir(root), "team.json")
         self.key_path = os.path.join(key_dir, f"{meta['id']}.json")
@@ -202,17 +203,17 @@ class TeamHost:
     # -- members
     def _find_name(self, name):
         """그 이름을 쓰는 팀원 id. 그룹 이름·all 이면 "" (@이름 이 겹치지 않게 팀원도 못 씀), 없으면 None"""
-        key = _key(name)
+        key = name_key(name)
         for mid, m in self.data["members"].items():
-            if _key(m["name"]) == key:
+            if name_key(m["name"]) == key:
                 return mid
         if key == ALL_NAME or self._find_group(name):
             return ""
         return None
 
     def _find_group(self, name):
-        key = _key(name)
-        return next((gid for gid, g in self.data["groups"].items() if _key(g["name"]) == key), None)
+        key = name_key(name)
+        return next((gid for gid, g in self.data["groups"].items() if name_key(g["name"]) == key), None)
 
     def _ensure_owner(self, name):
         """호스트 PC 주인은 초대장 없이 자동으로 관리자 팀원"""
@@ -327,7 +328,7 @@ class TeamHost:
                 return self._session(mid, iat)
             if purged:
                 self._save()
-        raise TeamError("bad_code", "초대장 코드가 맞지 않거나 만료됐습니다.\n15분 안에 한 번만 쓸 수 있습니다.", 401)
+        raise bad_code()
 
     def _session(self, mid, iat=None):
         token = make_token(self.data["sign_key"], mid, iat)
@@ -534,7 +535,7 @@ class TeamHost:
         for n, i in zip(names, list(ids) + [""] * len(names)):
             # 팀원 id 가 아니면 그룹: id 로, 없거나 지운 그룹 id 면 이름으로 (같은 이름으로 다시 만든 그룹)
             gid = None if i in members else (i if i in groups else self._find_group(n))
-            if _key(n) == ALL_NAME and i not in members:   # 예전에 'All' 이라는 팀원이 있었으면 그 사람
+            if name_key(n) == ALL_NAME and i not in members:   # 예전에 'All' 이라는 팀원이 있었으면 그 사람
                 hit = [m["name"] for m in members.values()]
             elif gid:
                 hit = [m["name"] for m in members.values() if gid in (m.get("groups") or ())]
@@ -546,11 +547,11 @@ class TeamHost:
         return list(dict.fromkeys(out)) if wide else None
 
     def member_ids(self):
-        """{이름.casefold(): 팀원id·그룹id}: 일정 저장 때 @이름·@그룹 에 ~id 붙이기용 (schedule.stamp).
+        """{name_key(이름): 팀원id·그룹id}: 일정 저장 때 @이름·@그룹 에 ~id 붙이기용 (schedule.stamp).
         id 를 붙여 두면 그룹 이름을 바꿔도 일정이 따라감. @all 은 붙이지 않음"""
         with self.lock:
-            ids = {g["name"].casefold(): gid for gid, g in self.data["groups"].items()}
-            ids.update({m["name"].casefold(): mid for mid, m in self.data["members"].items()})
+            ids = {name_key(g["name"]): gid for gid, g in self.data["groups"].items()}
+            ids.update({name_key(m["name"]): mid for mid, m in self.data["members"].items()})
             return ids
 
     def mention_names(self):
@@ -567,8 +568,7 @@ class TeamHost:
                     "perm": self._perm(m), "perm_set": m.get("perm", "auto") if not m.get("admin") else "write",
                     "groups": [groups[g]["name"] for g in m.get("groups") or () if g in groups],
                     "group_ids": [g for g in m.get("groups") or () if g in groups],
-                    "min_iat": m.get("min_iat", 0),
-                    "online": now - m.get("last_seen", 0) < ONLINE_WINDOW or bool(m.get("admin")),
-                    "last_seen": m.get("last_seen", 0)}
+                    # min_iat·last_seen 은 /me 로 팀원 PC 에 가므로 내보내지 않음 (online 만)
+                    "online": now - m.get("last_seen", 0) < ONLINE_WINDOW or bool(m.get("admin"))}
                    for mid, m in self.data["members"].items()]
         return sorted(out, key=lambda m: (not m["admin"], m["name"]))

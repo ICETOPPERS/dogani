@@ -36,6 +36,15 @@
   // 근태 = 빨강(--sun), 태그 = 태그 색, 태그 없는 할일 = --text-muted (본문보다 한 단계 옅게), 나머지 = --accent
   const eventColor = (ev) => (ev.off ? "var(--sun)" : ev.tags && ev.tags.length ? `hsl(${tagHue(ev.tags[0])} 70% 50%)` : ev.task ? "var(--text-muted)" : "var(--accent)");
 
+  // ---- @이름: cleanName = 일정 줄에 적는 꼴(공백·@·#·쉼표 뺌), nameKey = 비교용(+소문자, schedule.name_key 와 같은 규칙)
+  const cleanName = (v) => String(v || "").replace(/[@#,，\s]/g, "");
+  const nameKey = (v) => cleanName(v).toLowerCase();
+  /** 이름 목록 → cleanName 꼴, 빈 이름·같은 nameKey 는 처음 것만 */
+  function uniqNames(list) {
+    const seen = new Set();
+    return (list || []).map(cleanName).filter((n) => n && !seen.has(nameKey(n)) && seen.add(nameKey(n)));
+  }
+
   /**
    * 근태 (==날짜== 줄, 날짜 줄 자리에 표시, 일정 칸에는 안 그림):
    * 보는 사람마다 다름: "rest" = 멤버 없음(모두) 또는 멤버에 내가 있음 → 내 쉬는 날(빨간 칸·노트 이동 건너뜀),
@@ -44,9 +53,8 @@
    */
   function offKind(ev, me) {
     if (!ev.holiday) return "";
-    const ms = ev.reach || ev.members || [];
-    const all = ms.some((m) => String(m).toLowerCase() === "all");
-    return !ms.length || all || (me && ms.includes(me)) ? "rest" : "leave";
+    const ms = (ev.reach || ev.members || []).map(nameKey);
+    return !ms.length || ms.includes("all") || (me && ms.includes(nameKey(me))) ? "rest" : "leave";
   }
 
   /**
@@ -162,7 +170,7 @@
   const timeText = (ev) => (ev.time || "") + q(ev);
   const shortTime = (ev) => (ev.time || "").split("-")[0] + q(ev);
   // 스페이스가 둘 이상 보이면(ev.spaceMarks) 툴팁 앞에 [스페이스 이름들]. 스페이스 색은 달력 위 칩에 마우스를 올릴 때만 (app.js)
-  // 할일(노트의 날짜 붙은 체크박스): 앞에 체크 네모, 완료면 취소선 (ev.task = {sp, note, line, raw, done})
+  // 할일(내 스페이스 노트의 날짜 붙은 체크박스): 앞에 체크 네모(누르면 노트 줄 체크), 완료면 취소선 (ev.task = {sp, note, line, raw, done})
   const taskBox = (ev) => (ev.task ? `<span class="ev-check${ev.task.done ? " on" : ""}"></span>` : "");
   const evAttrs = (ev, cls) => `class="${cls.join(" ")}${ev.task ? " task" + (ev.task.done ? " done" : "") : ""}${ev.stale ? " stale" : ""}" data-k="${ev.k ?? ""}" style="--ev:${eventColor(ev)}" ` +
     `data-tip="${esc((ev.spaceMarks ? `[${ev.spaceMarks.map((m) => m.name).join(" · ")}] ` : "") + eventTip(ev))}"`;
@@ -425,7 +433,7 @@
   })();
 
   window.doganiCalendar = {
-    WD, pad, iso, parseISO, addDays, addMonths, tagHue, eventCard,
+    WD, pad, iso, parseISO, addDays, addMonths, tagHue, eventCard, cleanName, nameKey, uniqNames,
     index, isOff, nextWorkday, slotLabels, renderMonth, fitCells, dayEvents,
   };
 })();
