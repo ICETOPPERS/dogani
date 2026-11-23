@@ -51,5 +51,22 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 [Run]
 Filename: "{app}\dogani.exe"; Description: "dogani 실행"; Flags: nowait postinstall skipifsilent
 
+[Code]
+// 앱 안 자동 업데이트(updater.setup_command 가 /RELAUNCH=1 을 줌)는 런처가 먼저 꺼짐 → 설치가 끝나면 다시 띄움.
+// [Run] 은 성공했을 때만 돌아서, 실패하면(파일 잠김 등) dogani 가 안 켜진 채 끝남 → 성공·실패 모두 지나는 여기서.
+// 실패하면 Inno 가 되돌려 놓으므로 예전 exe 가 뜸
+procedure DeinitializeSetup();
+var
+  Code: Integer;
+begin
+  if ExpandConstant('{param:RELAUNCH|0}') <> '1' then
+    Exit;
+  try
+    Exec(ExpandConstant('{app}\dogani.exe'), '', '', SW_SHOWNORMAL, ewNoWait, Code);
+  except
+    Exec(ExpandConstant('{localappdata}\Programs\dogani\dogani.exe'), '', '', SW_SHOWNORMAL, ewNoWait, Code);
+  end;
+end;
+
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/im dogani.exe /f"; Flags: runhidden; RunOnceId: "killdogani"

@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-rem dist\dogani\dogani.exe 생성 (런처). 처음 한 번만 나눠 주면 이후 업데이트는 켤 때 GitHub 태그에서 자동.
+rem dist\dogani\dogani.exe 생성 (런처). 코드는 GitHub 태그에서, 런처는 Release 의 dogani-setup.exe 에서 앱이 알아서 받음.
 rem 다시 빌드가 필요한 때: 새 외부 라이브러리를 쓰게 됐을 때(app\deps.py 에 추가) / launcher.py 를 고쳤을 때
 cd /d "%~dp0"
 rem 빌드 파이썬은 3.13 고정: PATH 의 python 은 다른 버전일 수 있고, 버전이 바뀌면 exe 안 의존성도 바뀜
@@ -30,6 +30,8 @@ set "VER="
 for /f %%T in ('git describe --tags --abbrev^=0 2^>nul') do set "VER=%%T"
 if not defined VER set "VER=dev"
 echo.
+rem 앱은 Release 태그와 이 빌드의 태그를 비교함 → 다른 태그에 Release 를 달면 새로 설치한 PC 가 같은 빌드를 한 번 더 받음
+git describe --tags --exact-match >nul 2>nul || echo 주의: 지금 커밋에 태그가 없습니다. 이 빌드의 Release 는 %VER% 태그에 다세요.
 if defined ISCC (
     "%ISCC%" /Q /DAppVer=%VER% installer.iss || goto :error
     echo 완료: dist\dogani-setup.exe 를 나눠 주세요. ^(폴더째 쓰려면 dist\dogani^)

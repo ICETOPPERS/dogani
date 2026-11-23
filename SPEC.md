@@ -39,7 +39,7 @@ Windows 전용 단일 프로그램. 노트 서버, 오버레이 뷰어, 트레�
 | `app/team.py` | 팀원, 초대장, 토큰 |
 | `app/ed25519.py` | 표준 라이브러리만 쓴 Ed25519 |
 | `app/schedule.py` | 일정 파일 파서 |
-| `app/updater.py` | 최신 태그 zip을 받아 `app.new` 에 풀어 둠 |
+| `app/updater.py` | 최신 태그 zip을 받아 `app.new` 에 풀어 둠. 최신 Release 설치 파일을 받아 두었다가 켤 때 조용히 설치함 |
 | `app/liveupdate.py` | exe에서는 버전 표시, 소스 실행에서는 `devreload` 연결 |
 | `app/devreload.py` | 개발 중 ui 변경 시 새로 고침, .py 변경 시 재시작 |
 | `app/deps.py` | exe에 넣을 모듈 목록. 여기 없는 모듈은 받은 코드에서 import할 수 없음 |
@@ -137,7 +137,7 @@ Ed25519 개인키 `sign_key` 와 초대장 목록 `invites` 를 둠. 호스트 �
 - 호스트 연결이 끊기면 저장해 둔 호스트 PC 이름으로 IP를 다시 찾음. 같은 망에서만 됨.
 - 호스트를 옮기려면 스페이스 폴더와 3.5의 키 파일을 함께 복사함. 키 파일이 없으면 팀원 모두 다시 참여해야 함.
 - 통신은 평문 HTTP로 함. 같은 망에서 패킷을 가로채면 노트와 토큰을 볼 수 있음.
-- 업데이트 zip은 HTTPS로 받지만 서명은 확인하지 않음.
+- 업데이트 zip과 런처 설치 파일은 HTTPS로 받지만 서명은 확인하지 않음. 설치 파일은 우리 저장소 Release 주소인지와 크기·sha256 만 확인함.
 
 ## 6. 배포
 
@@ -146,7 +146,12 @@ Ed25519 개인키 `sign_key` 와 초대장 목록 `invites` 를 둠. 호스트 �
 - 소스 실행은 업데이트를 받지 않음.
 - 받은 코드가 import 중에 죽으면 그 폴더에서 올라온 모듈을 모두 내리고 같은 프로세스에서 내장 코드로 실행함. 시작(`main()`) 중에 죽으면 내장 코드로 새 프로세스를 띄우고(`DOGANI_SAFE=1`, 업데이트 건너뜀) 앞 프로세스는 끝냄. 어느 경우든 그 버전을 `%APPDATA%\dogani\app.bad` 에 적어 다음 실행부터 건너뛰고, 같은 태그는 받지도 바꿔 끼우지도 않음(폴더는 남김, 버전을 모르면 지움). 다시 띄운 내장 코드까지 시작하다 죽으면 환경 탓으로 보고 `app.bad` 를 지움.
 - 런처 오류(업데이트 확인 실패·받은 코드·내장 코드 실패)는 `%APPDATA%\dogani\launcher.log` 에 traceback 과 함께 남김. 256KB 를 넘으면 새로 씀.
-- `deps.py` 나 `launcher.py` 를 고치면 exe와 설치 파일을 다시 빌드해 배포해야 함.
+- `deps.py` 나 `launcher.py` 를 고치면 exe와 설치 파일을 다시 빌드해 Release 로 올림. 설치된 exe 가 알아서 받아 설치함(아래).
+- 런처 업데이트: exe 가 켜지고 1분 뒤 백그라운드에서 최신 Release 의 `dogani-setup.exe` 를 확인함. 릴리스 태그가 지금 exe 버전(내장 코드 `version.json` 과 `setup.done` 중 큰 값)보다 새것이면 `%APPDATA%\dogani\setup\` 에 받음. 크기와 GitHub `digest`(sha256)가 맞을 때만 남기고, `setup.json`(태그·sha256)은 맨 마지막에 씀.
+- 다음에 켤 때 `updater.stage()` 가 sha256 을 다시 확인한 뒤 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL /SP- /LOG=setup.log /MERGETASKS=(!)autostart` 와 `/RELAUNCH=1` 로 설치를 띄우고, 태그를 `setup.done` 에 적은 다음 런처는 바로 끝남. 설치 파일은 성공하든 실패하든 끝날 때(`DeinitializeSetup`) dogani.exe 를 다시 띄움. 실패하면 Inno 가 되돌려 놓은 예전 exe 가 뜸. 자동 실행은 트레이에서 바꾼 지금 값을 따름.
+- 한 태그는 한 번만 시도함(설치 파일을 띄우지 못했으면 시도로 치지 않음). 남은 설치 파일은 다음 확인 때 치움.
+- Release 는 build.bat 으로 빌드한 그 태그에 닮. 다른 태그에 달면 직접 새로 설치한 PC 가 같은 빌드를 한 번 더 받음. 설치 정보(HKCU Uninstall `InstallLocation`)가 실행 중인 exe 폴더와 다르면(폴더째 복사해 씀) 받지도 설치하지도 않음. 소스 실행도 마찬가지.
+- 이 동작은 `updater.py` 에 있어서, 예전 런처도 태그 업데이트만 받으면 이 기능이 생김.
 - 빌드는 Python 3.13(`%ProgramFiles%\Python313`, 없으면 `py -3.13`)과 `requirements.txt` 의 고정 버전, PyInstaller 6.22.3 으로 함.
 
 ## 7. UI

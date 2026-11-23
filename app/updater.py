@@ -5,7 +5,11 @@
 - 받는 쪽(exe, 나·동료 동일): 런처가 켤 때 GitHub 의 최신 태그를 확인해 새 버전이면 받아서 바로 적용.
   실행 중에는 확인하지 않음.
 - 소스 실행(개발 PC)은 받지 않음.
+- 런처(exe) 자체: 실행 중에 최신 Release 의 dogani-setup.exe 를 받아 두고(stage_launcher),
+  다음에 켤 때 stage() 가 조용히 설치한 뒤 이 프로세스를 끝냄(apply_launcher). 설치가 끝나면 설치 파일이 새 exe 를 띄움.
+  런처는 이 파일의 stage() 만 부르므로, 이 기능은 예전 런처에도 태그 업데이트만으로 들어감.
 """
+import hashlib
 import io
 import json
 import os
@@ -14,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+import winreg
 import zipfile
 
 REPO = "nodogani/dogani"
@@ -26,6 +31,17 @@ FROZEN = getattr(sys, "frozen", False)
 NO_WINDOW = 0x08000000
 TAG_RE = re.compile(r"^v\d{2}\.\d{2}\.\d{2}\.\d{2}$")
 UA = {"User-Agent": "dogani-updater"}
+
+SETUP_DIR = os.path.join(CONFIG_DIR, "setup")  # 받아 둔 설치 파일
+SETUP_EXE = os.path.join(SETUP_DIR, "dogani-setup.exe")
+SETUP_INFO = os.path.join(SETUP_DIR, "setup.json")  # {"tag", "sha256"}. 설치 파일을 다 받은 뒤 마지막에 씀
+SETUP_DONE = os.path.join(CONFIG_DIR, "setup.done")  # 설치를 시도한 릴리스 태그 (같은 설치를 반복하지 않게)
+SETUP_LOG = os.path.join(CONFIG_DIR, "setup.log")
+SETUP_NAME = "dogani-setup.exe"
+# installer.iss 의 AppId. Inno Setup 이 사용자 단위 설치 정보를 여기에 적음
+UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F4D2B1E-7C3A-4E8F-9B21-D0A9C5E3F781}_is1"
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"  # dogani.py 의 자동 실행과 같은 값
+DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: 런처가 끝나도 설치는 계속
 
 
 # ---------------------------------------------------------------- 내 버전
@@ -67,7 +83,10 @@ def latest_tag(timeout=5):
 
 
 def stage(timeout=20):
-    """최신 태그의 app/ 을 STAGED_DIR 에 받아 둔다. 받았으면 True"""
+    """최신 태그의 app/ 을 STAGED_DIR 에 받아 둔다. 받았으면 True.
+    런처가 켤 때 dogani 보다 먼저 부르는 유일한 함수라 받아 둔 런처 설치도 여기서 시작함"""
+    if apply_launcher():
+        os._exit(0)  # 설치 파일이 dogani.exe 를 덮어써야 하므로 바로 끝냄 (mutex 도 아직 안 잡았음)
     tag = latest_tag(5)
     if not tag or tag <= current_version().get("id", ""):
         return False
@@ -97,3 +116,166 @@ def stage(timeout=20):
         return True
     except (OSError, ValueError, zipfile.BadZipFile, IndexError):
         return False
+
+
+# ---------------------------------------------------------------- 런처(exe) 업데이트
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_atomic(path, text):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def launcher_version():
+    """설치된 exe 의 버전 = 빌드 때 넣은 내장 코드 버전. 설치를 시도한 릴리스 태그가 더 크면 그것
+    (릴리스를 빌드 때보다 뒤 태그에 달았으면 내장 버전이 영영 작아서 켤 때마다 다시 설치하게 됨)"""
+    bundled = _read_json(os.path.join(getattr(sys, "_MEIPASS", ""), "app", "version.json")).get("id", "")
+    try:
+        with open(SETUP_DONE, encoding="utf-8") as f:
+            done = f.read().strip()
+    except OSError:
+        done = ""
+    return max(v for v in (bundled, done) if isinstance(v, str))
+
+
+def installed_here():
+    """설치 파일로 깐 exe 인지. 폴더째 복사해 쓰는 exe 에 설치를 돌리면 다른 곳에 하나 더 깔림"""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as key:
+            where = winreg.QueryValueEx(key, "InstallLocation")[0]
+    except OSError:
+        return False
+    norm = lambda p: os.path.normcase(os.path.normpath(p))  # noqa: E731
+    return isinstance(where, str) and bool(where) and norm(where) == norm(os.path.dirname(sys.executable))
+
+
+def autostart_on():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+            winreg.QueryValueEx(key, "dogani")
+            return True
+    except OSError:
+        return False
+
+
+def latest_release(timeout=5):
+    """최신 Release 의 (태그, 설치 파일 정보). 없거나 모양이 이상하면 None"""
+    try:
+        rel = json.loads(_get(f"https://api.github.com/repos/{REPO}/releases/latest", timeout))
+        tag = rel.get("tag_name", "")
+        asset = next(a for a in rel.get("assets") or [] if a.get("name") == SETUP_NAME)
+    except (OSError, ValueError, AttributeError, TypeError, StopIteration):
+        return None
+    url, size, digest = asset.get("browser_download_url", ""), asset.get("size"), asset.get("digest") or ""
+    if (not isinstance(tag, str) or not TAG_RE.match(tag) or not isinstance(url, str)
+            or not url.startswith(f"https://github.com/{REPO}/releases/download/")
+            or not isinstance(size, int) or size <= 0 or not isinstance(digest, str)):
+        return None
+    sha = digest[7:].lower() if digest.startswith("sha256:") else ""  # 예전에 올린 파일은 digest 가 없음
+    return tag, {"url": url, "size": size, "sha256": sha}
+
+
+def _download(url, dest, size, sha256, timeout):
+    """임시 파일로 받고 크기·해시가 맞을 때만 dest 로 바꿔 끼움. 받은 파일의 sha256, 실패면 None"""
+    tmp = dest + ".tmp"
+    h, n = hashlib.sha256(), 0
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=timeout) as r, \
+                open(tmp, "wb") as f:
+            for chunk in iter(lambda: r.read(1 << 20), b""):
+                h.update(chunk)
+                n += len(chunk)
+                f.write(chunk)
+        if n != size or (sha256 and h.hexdigest() != sha256):
+            raise ValueError("크기·해시 불일치")
+        os.replace(tmp, dest)
+        return h.hexdigest()
+    except (OSError, ValueError):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return None
+
+
+def stage_launcher(timeout=60):
+    """최신 Release 의 설치 파일이 지금 exe 보다 새것이면 SETUP_DIR 에 받아 둔다. 받았으면 True.
+    150MB 쯤 되므로 켤 때가 아니라 실행 중 백그라운드에서 부름 (liveupdate)"""
+    if not FROZEN or not installed_here():
+        return False
+    staged = _read_json(SETUP_INFO).get("tag")
+    if not isinstance(staged, str) or staged <= launcher_version():
+        # 설치가 끝났는데 남은 것: 설치 직후 켠 새 exe 가 치우려 할 땐 설치 파일이 아직 돌고 있어 못 지울 수 있음
+        shutil.rmtree(SETUP_DIR, ignore_errors=True)
+    rel = latest_release()
+    if not rel or rel[0] <= launcher_version():
+        return False
+    tag, asset = rel
+    if _read_json(SETUP_INFO).get("tag") == tag and os.path.isfile(SETUP_EXE):
+        return False  # 이미 받아 둠
+    try:
+        os.makedirs(SETUP_DIR, exist_ok=True)
+        if os.path.exists(SETUP_INFO):
+            os.remove(SETUP_INFO)  # 설치 파일을 바꾸는 동안 예전 표시가 새 파일을 가리키지 않게
+    except OSError:
+        return False
+    sha = _download(asset["url"], SETUP_EXE, asset["size"], asset["sha256"], timeout)
+    if not sha:
+        return False
+    try:
+        _write_atomic(SETUP_INFO, json.dumps({"tag": tag, "sha256": sha}))
+    except OSError:
+        return False
+    return True
+
+
+def setup_command():
+    """조용히 설치. 자동 실행은 트레이에서 바꾼 지금 상태를 따름 (설치 파일은 처음 고른 값을 기억하고 있음)"""
+    tasks = "autostart" if autostart_on() else "!autostart"
+    # /RELAUNCH=1: 설치가 끝나면(실패해도) installer.iss 가 dogani 를 다시 띄움
+    return [SETUP_EXE, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", "/SP-",
+            f"/LOG={SETUP_LOG}", f"/MERGETASKS={tasks}", "/RELAUNCH=1"]
+
+
+def apply_launcher():
+    """받아 둔 설치 파일이 지금 exe 보다 새것이면 실행. 실행했으면 True (부른 쪽이 바로 끝나야 함).
+    한 태그는 한 번만 시도: 설치가 실패해도 다음에 켤 때는 지금 exe 로 정상 실행"""
+    if not FROZEN:
+        return False
+    tag = _read_json(SETUP_INFO).get("tag")
+    if not isinstance(tag, str) or not TAG_RE.match(tag):
+        return False
+    if tag <= launcher_version():  # 설치 끝 (또는 더 새 exe 를 직접 깔았음) → 치움
+        shutil.rmtree(SETUP_DIR, ignore_errors=True)
+        return False
+    if not installed_here():
+        return False
+    try:
+        if _sha256(SETUP_EXE) != _read_json(SETUP_INFO).get("sha256"):  # 받은 뒤 깨지거나 바뀐 파일
+            shutil.rmtree(SETUP_DIR, ignore_errors=True)
+            return False
+        subprocess.Popen(setup_command(), creationflags=DETACHED, close_fds=True)
+    except OSError:  # 못 띄웠으면(백신이 막는 등) 시도로 치지 않음 → 다음에 켤 때 다시
+        return False
+    try:
+        _write_atomic(SETUP_DONE, tag)
+    except OSError:
+        pass
+    return True

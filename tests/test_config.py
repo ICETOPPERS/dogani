@@ -212,6 +212,161 @@ class LatestTagTest(unittest.TestCase):
             self.assertIsNone(updater.latest_tag())
 
 
+class LauncherUpdateTest(unittest.TestCase):
+    """런처(exe) 업데이트: 최신 Release 설치 파일을 받아 두고(stage_launcher) 다음에 켤 때 조용히 설치(apply_launcher).
+    동료 PC 에서 내려받은 exe 를 실행하는 경로라 '받은 그대로인 새 버전만, 한 태그는 한 번만' 을 본다"""
+    OLD, NEW = "v26.11.19.02", "v26.11.24.01"
+    DATA = b"setup-bytes" * 100
+    REAL_RELEASE = staticmethod(updater.latest_release)  # setUp 이 바꿔 끼우기 전 것
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="dogani-test-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        setup = os.path.join(self.tmp, "setup")
+        meipass = os.path.join(self.tmp, "meipass")
+        os.makedirs(os.path.join(meipass, "app"))
+        with open(os.path.join(meipass, "app", "version.json"), "w", encoding="utf-8") as f:
+            json.dump({"id": self.OLD, "label": self.OLD}, f)
+        for name, value in {"SETUP_DIR": setup, "SETUP_EXE": os.path.join(setup, "dogani-setup.exe"),
+                            "SETUP_INFO": os.path.join(setup, "setup.json"),
+                            "SETUP_DONE": os.path.join(self.tmp, "setup.done"),
+                            "SETUP_LOG": os.path.join(self.tmp, "setup.log"), "FROZEN": True,
+                            "installed_here": lambda: True, "autostart_on": lambda: True}.items():
+            self.patch(updater, name, value)
+        self.patch(sys, "_MEIPASS", meipass, create=True)
+        self.popen = mock.MagicMock()
+        self.patch(updater.subprocess, "Popen", self.popen)
+        self.release(self.NEW, self.DATA)
+
+    def patch(self, obj, name, value, **kw):
+        p = mock.patch.object(obj, name, value, **kw)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def release(self, tag, data, size=None, digest="ok"):
+        import hashlib
+        sha = hashlib.sha256(data).hexdigest() if digest == "ok" else digest
+        asset = {"url": f"https://github.com/{updater.REPO}/releases/download/{tag}/dogani-setup.exe",
+                 "size": len(data) if size is None else size, "sha256": sha}
+        self.patch(updater, "latest_release", lambda timeout=5: (tag, asset))
+        self.patch(updater.urllib.request, "urlopen", lambda req, timeout: io.BytesIO(data))
+
+    def staged(self):
+        return updater._read_json(updater.SETUP_INFO).get("tag")
+
+    def test_latest_release_shape(self):
+        """우리 저장소 Release 주소·버전 모양 태그·크기가 있어야 함. digest 없으면 해시 확인만 건너뜀"""
+        url = f"https://github.com/{updater.REPO}/releases/download/{self.NEW}/dogani-setup.exe"
+        good = {"tag_name": self.NEW, "assets": [{"name": "other.zip"}, {
+            "name": "dogani-setup.exe", "browser_download_url": url, "size": 10, "digest": "sha256:ABC"}]}
+
+        def got(rel):
+            with mock.patch.object(updater, "_get", lambda u, timeout: json.dumps(rel).encode()):
+                return self.REAL_RELEASE()
+        self.assertEqual(got(good), (self.NEW, {"url": url, "size": 10, "sha256": "abc"}))
+        no_digest = json.loads(json.dumps(good))
+        del no_digest["assets"][1]["digest"]
+        self.assertEqual(got(no_digest)[1]["sha256"], "")
+        for bad in ({**good, "tag_name": "test"}, {**good, "assets": [good["assets"][0]]}, [],
+                    {**good, "assets": [{**good["assets"][1], "browser_download_url": "https://evil/x.exe"}]},
+                    {**good, "assets": [{**good["assets"][1], "size": "10"}]}):
+            self.assertIsNone(got(bad))
+
+    def test_stage_newer(self):
+        self.assertTrue(updater.stage_launcher())
+        with open(updater.SETUP_EXE, "rb") as f:
+            self.assertEqual(f.read(), self.DATA)
+        self.assertEqual(self.staged(), self.NEW)
+        self.assertFalse(updater.stage_launcher())  # 이미 받아 둠
+
+    def test_stage_skips(self):
+        """같은 버전·소스 실행·폴더째 복사한 exe 는 받지 않음"""
+        self.release(self.OLD, self.DATA)
+        self.assertFalse(updater.stage_launcher())
+        self.release(self.NEW, self.DATA)
+        for name, value in (("FROZEN", False), ("installed_here", lambda: False)):
+            with mock.patch.object(updater, name, value):
+                self.assertFalse(updater.stage_launcher())
+        self.assertFalse(os.path.exists(updater.SETUP_EXE))
+
+    def test_stage_rejects_wrong_size_or_hash(self):
+        for kw in ({"size": len(self.DATA) + 1}, {"digest": "0" * 64}):
+            self.release(self.NEW, self.DATA, **kw)
+            self.assertFalse(updater.stage_launcher())
+            self.assertIsNone(self.staged())
+            self.assertEqual([n for n in os.listdir(updater.SETUP_DIR)], [])  # .tmp 도 안 남음
+
+    def test_apply_runs_once_then_cleans(self):
+        updater.stage_launcher()
+        self.assertTrue(updater.apply_launcher())
+        cmd = self.popen.call_args[0][0]
+        self.assertEqual(cmd[0], updater.SETUP_EXE)
+        self.assertIn("/VERYSILENT", cmd)
+        self.assertIn("/MERGETASKS=autostart", cmd)
+        # 설치가 실패해 예전 exe 그대로여도 같은 태그는 다시 안 돌리고 치움
+        self.assertFalse(updater.apply_launcher())
+        self.assertEqual(self.popen.call_count, 1)
+        self.assertFalse(os.path.exists(updater.SETUP_DIR))
+
+    def test_apply_skips(self):
+        """바뀐 설치 파일은 지움, 폴더째 복사한 exe·소스 실행은 그대로 둠, 이미 새 exe 면 치움"""
+        updater.stage_launcher()
+        with mock.patch.object(updater, "FROZEN", False):
+            self.assertFalse(updater.apply_launcher())
+        with mock.patch.object(updater, "installed_here", lambda: False):
+            self.assertFalse(updater.apply_launcher())
+        self.assertEqual(self.staged(), self.NEW)
+        with open(updater.SETUP_EXE, "ab") as f:
+            f.write(b"x")
+        self.assertFalse(updater.apply_launcher())
+        self.assertFalse(os.path.exists(updater.SETUP_DIR))
+
+        updater.stage_launcher()
+        with open(os.path.join(sys._MEIPASS, "app", "version.json"), "w", encoding="utf-8") as f:
+            json.dump({"id": self.NEW}, f)  # 그사이 새 설치 파일을 직접 깔았음
+        self.assertFalse(updater.apply_launcher())
+        self.assertFalse(os.path.exists(updater.SETUP_DIR))
+        self.popen.assert_not_called()
+
+    def test_popen_failure_not_counted(self):
+        """설치 파일을 못 띄웠으면(백신 등) 시도로 치지 않음 → 다음에 켤 때 다시"""
+        updater.stage_launcher()
+        self.popen.side_effect = OSError("blocked")
+        self.assertFalse(updater.apply_launcher())
+        self.assertFalse(os.path.exists(updater.SETUP_DONE))
+        self.assertEqual(self.staged(), self.NEW)
+
+    def test_stage_cleans_leftover(self):
+        """설치 직후 못 지운 설치 파일·중간에 끊긴 .tmp 는 다음 확인 때 치움"""
+        os.makedirs(updater.SETUP_DIR)
+        for name in ("dogani-setup.exe", "dogani-setup.exe.tmp"):
+            with open(os.path.join(updater.SETUP_DIR, name), "wb") as f:
+                f.write(b"old")
+        self.release(self.OLD, self.DATA)
+        self.assertFalse(updater.stage_launcher())
+        self.assertFalse(os.path.exists(updater.SETUP_DIR))
+
+    def test_assets_null(self):
+        with mock.patch.object(updater, "_get", lambda u, timeout: b'{"tag_name": "v26.11.24.01", "assets": null}'):
+            self.assertIsNone(self.REAL_RELEASE())
+
+    def test_autostart_off_kept(self):
+        with mock.patch.object(updater, "autostart_on", lambda: False):
+            cmd = updater.setup_command()
+        self.assertIn("/MERGETASKS=!autostart", cmd)
+        self.assertIn("/RELAUNCH=1", cmd)  # 설치가 끝나면 installer.iss 가 다시 띄움
+
+    def test_stage_exits_for_install(self):
+        """켤 때 stage() 가 설치를 시작하면 dogani.exe 를 놓도록 바로 끝남 (코드 zip 은 안 받음)"""
+        with mock.patch.object(updater, "apply_launcher", lambda: True), \
+                mock.patch.object(updater.os, "_exit", side_effect=SystemExit) as ex, \
+                mock.patch.object(updater, "latest_tag") as tag:
+            with self.assertRaises(SystemExit):
+                updater.stage()
+            ex.assert_called_once_with(0)
+            tag.assert_not_called()
+
+
 class DepsTest(unittest.TestCase):
     """받아 오는 코드(app/*.py)가 import 하는 모듈은 deps.py 를 실행했을 때 모두 올라와 있어야 함
     (exe 는 PyInstaller 가 deps.py 에서 찾은 것만 담음. 빠지면 업데이트 뒤 동료 PC 에서 import 실패)"""
