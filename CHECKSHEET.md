@@ -2,6 +2,15 @@
 
 ## 미커밋 작업
 
+- 배포 서명 (worktree `../dogani-sign`, 브랜치 `sign-release` → main 위로 rebase, 런처 자동 업데이트와 `updater.py` 독스트링·`stage()` 앞부분 충돌을 양쪽 다 살려 풂)
+  - `app/codesign.py`·`tools/sign_release.py` 추가, `updater.stage()` 가 풀기 전에 서명 확인 (안 맞으면 `SignatureError` → launcher.log)
+  - 판단: zip 바이트가 아니라 파일별 sha256 + 태그 이름을 서명 (GitHub zip 은 `.bat` 을 CRLF 로 바꿔 줌, 실제 v26.11.20.01 zip 으로 21개 파일 확인). 런처가 updater 를 경로로 불러서 codesign·ed25519 도 경로로 읽고 sys.modules 에 안 올림
+  - 개인 키: `~/.dogani/release_key` 만듦 (공개키 `e1a0c4e3…`). 백업 필요
+  - 거절한 태그는 `%APPDATA%\dogani\app.rejected` 에 적어 더 새 태그가 나올 때까지 다시 받지 않음. launcher.log 한 줄에 이유도 적음 (launcher.py 한 줄 → exe 재빌드에 포함)
+  - 시험: test_sign 18 추가, test_config StageTest 를 서명 zip 으로. rebase 뒤 Python 110·node 30 통과
+  - /code-review medium (updater·codesign·sign_release): 10건 중 7건 반영 (서명 전 키 확인을 직전 태그·인덱스 기준으로, 거절 태그 기억, 서명 확인 뒤에 app.new 지움, 줄바꿈 맞추기는 글자 파일만, 로그에 이유, 충돌 중 서명 거부, release.sig 원자적 저장). 안 한 것: 예외 대신 False(로그에 이유를 남기려고 일부러), exe 내장 코드 폴백(재빌드로 해결)
+  - 다음: exe 재빌드 → 첫 서명 태그. 다른 세션이 넣는 런처 자동 업데이트(Release `dogani-setup.exe`)도 GitHub digest 만 믿으므로 같은 키로 서명할지 정할 것
+
 ## 아직 정할 것
 
 - 집 PC 가 같은 사람인데 팀원 이름이 겹치면 참여가 거절됨 → 지금은 `송민(집)` 처럼 다른 이름을 써야 함. "사람 하나 + 기기 여러 개" 로 묶을지

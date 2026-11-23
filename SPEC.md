@@ -39,7 +39,9 @@ Windows 전용 단일 프로그램. 노트 서버, 오버레이 뷰어, 트레�
 | `app/team.py` | 팀원, 초대장, 토큰 |
 | `app/ed25519.py` | 표준 라이브러리만 쓴 Ed25519 |
 | `app/schedule.py` | 일정 파일 파서 |
-| `app/updater.py` | 최신 태그 zip을 받아 `app.new` 에 풀어 둠. 최신 Release 설치 파일을 받아 두었다가 켤 때 조용히 설치함 |
+| `app/updater.py` | 최신 태그 zip을 받아 서명을 확인한 뒤 `app.new` 에 풀어 둠. 최신 Release 설치 파일을 받아 두었다가 켤 때 조용히 설치함 |
+| `app/codesign.py` | 배포 서명 만들기·확인 (`release.sig`) |
+| `tools/sign_release.py` | 배포 PC 에서 태그 커밋 직전에 `app/release.sig` 를 만듦 |
 | `app/liveupdate.py` | exe에서는 버전 표시, 소스 실행에서는 `devreload` 연결 |
 | `app/devreload.py` | 개발 중 ui 변경 시 새로 고침, .py 변경 시 재시작 |
 | `app/deps.py` | exe에 넣을 모듈 목록. 여기 없는 모듈은 받은 코드에서 import할 수 없음 |
@@ -137,12 +139,14 @@ Ed25519 개인키 `sign_key` 와 초대장 목록 `invites` 를 둠. 호스트 �
 - 호스트 연결이 끊기면 저장해 둔 호스트 PC 이름으로 IP를 다시 찾음. 같은 망에서만 됨.
 - 호스트를 옮기려면 스페이스 폴더와 3.5의 키 파일을 함께 복사함. 키 파일이 없으면 팀원 모두 다시 참여해야 함.
 - 통신은 평문 HTTP로 함. 같은 망에서 패킷을 가로채면 노트와 토큰을 볼 수 있음.
-- 업데이트 zip과 런처 설치 파일은 HTTPS로 받지만 서명은 확인하지 않음. 설치 파일은 우리 저장소 Release 주소인지와 크기·sha256 만 확인함.
+- 업데이트 zip은 배포 서명(6절)이 맞을 때만 적용함. 런처 설치 파일은 서명이 없고, 우리 저장소 Release 주소인지와 크기·sha256 만 확인함.
 
 ## 6. 배포
 
 - GitHub에 버전 태그(vYY.MM.DD.NN) push 시 dogani 런처가 태그의 `app/` 디렉터리를 자동으로 내려받음. editor는 빠짐.
 - 런처는 켤 때 한 번 최대 5초 동안 확인함. 실행 중에는 확인하지 않음.
+- 배포 서명: 태그 커밋에 `app/release.sig`(JSON `tag`·`key`·`sig`·`files`)를 넣음. 서명 대상은 `dogani-release\n` + `{"files": {상대 경로: sha256}, "tag": 태그}`(키 정렬, 공백 없는 JSON)이고, sha256 은 글자 파일(`codesign.TEXT_EXTS`)만 CRLF 를 LF 로 바꾼 뒤 계산함(GitHub zip 은 `*.bat` 을 CRLF 로 줌). `editor/` 와 `release.sig` 자신은 뺌. 받는 쪽은 풀기 전에(받아 둔 `app.new` 를 지우기 전에) 태그 이름·`updater.SIGN_KEYS` 의 공개키·서명·파일 목록(더하거나 빠진 파일 포함)을 확인하고, 하나라도 다르면 받지 않고 `SignatureError` 를 `launcher.log` 에 남김. 거절한 태그는 `%APPDATA%\dogani\app.rejected` 에 적어 더 새 태그가 나올 때까지 다시 받지 않음. 지금 실행 중인 코드의 키로만 확인하므로 키를 바꿀 때는 예전 키로 서명한 태그에서 `SIGN_KEYS` 에 새 키를 더함. 개인 키는 배포 PC 의 `~/.dogani/release_key`(저장소 밖)에 둠.
+- 태그 순서: `git add` 를 다 한 뒤 `python tools/sign_release.py vYY.MM.DD.NN`(인덱스를 서명하고 `release.sig` 를 `git add`) → 커밋 → 태그. 서명 없는 태그는 동료 PC 가 받지 않음. 스크립트는 키가 스테이징된 `app/updater.py` 와 직전 버전 태그의 `SIGN_KEYS` 에 모두 있을 때만 서명함(직전 태그가 서명 도입 전이면 그 확인은 건너뜀). 합치기 충돌 중이면 서명하지 않음.
 - 소스 실행은 업데이트를 받지 않음.
 - 받은 코드가 import 중에 죽으면 그 폴더에서 올라온 모듈을 모두 내리고 같은 프로세스에서 내장 코드로 실행함. 시작(`main()`) 중에 죽으면 내장 코드로 새 프로세스를 띄우고(`DOGANI_SAFE=1`, 업데이트 건너뜀) 앞 프로세스는 끝냄. 어느 경우든 그 버전을 `%APPDATA%\dogani\app.bad` 에 적어 다음 실행부터 건너뛰고, 같은 태그는 받지도 바꿔 끼우지도 않음(폴더는 남김, 버전을 모르면 지움). 다시 띄운 내장 코드까지 시작하다 죽으면 환경 탓으로 보고 `app.bad` 를 지움.
 - 런처 오류(업데이트 확인 실패·받은 코드·내장 코드 실패)는 `%APPDATA%\dogani\launcher.log` 에 traceback 과 함께 남김. 256KB 를 넘으면 새로 씀.

@@ -128,8 +128,8 @@ def fetch_update():
             # 죽은 버전을 이미 가진 것으로 쳐서 stage() 가 같은 태그 zip 을 켤 때마다 또 받지 않게
             mod.current_version = lambda: {"id": bad, "label": bad}
         mod.stage()
-    except Exception:
-        log("업데이트 확인 실패")
+    except Exception as e:   # 이유를 한 줄에 (서명 거절인지 네트워크 탓인지 traceback 끝까지 안 봐도 알게)
+        log(f"업데이트 확인 실패: {e}")
 
 
 def drop_modules(folder):

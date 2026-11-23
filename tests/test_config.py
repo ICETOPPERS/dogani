@@ -22,9 +22,13 @@ os.environ.setdefault("DOGANI_HOME", _HOME)   # import 때 정해지는 경로�
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, APP)
 
+import codesign  # noqa: E402
 import dogani  # noqa: E402
 import space  # noqa: E402
 import updater  # noqa: E402
+
+TEST_KEY = bytes(range(32))   # 시험용 배포 서명 키 (updater.SIGN_KEYS 를 이 공개키로 바꿔 씀)
+TEST_PUB = codesign.ed25519.public_key(TEST_KEY).hex()
 
 
 class TempHome(unittest.TestCase):
@@ -154,8 +158,10 @@ class StageTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="dogani-test-")
         self.staged = os.path.join(self.tmp, "app.new")
-        self.zip = make_zip({"README.md": "x", "app/dogani.py": "print(1)", "app/ui/app.js": "//",
-                             "app/editor/big.js": "//"})
+        app = {"dogani.py": b"print(1)", "ui/app.js": b"//", "editor/big.js": b"//"}
+        self.zip = make_zip({"README.md": "x", **{"app/" + k: v for k, v in app.items()},
+                             "app/release.sig": codesign.make(self.TAG, app, TEST_KEY)})
+        self.patch("SIGN_KEYS", (TEST_PUB,))
         self.patch("STAGED_DIR", self.staged)
         self.patch("latest_tag", lambda timeout=5: self.TAG)
         self.patch("current_version", lambda: {"id": "v26.11.20.01"})
@@ -177,7 +183,7 @@ class StageTest(unittest.TestCase):
 
     def test_newer_tag(self):
         self.assertTrue(updater.stage())
-        self.assertEqual(self.files(), ["dogani.py", "ui/app.js", "version.json"])   # editor/ 는 안 받음
+        self.assertEqual(self.files(), ["dogani.py", "release.sig", "ui/app.js", "version.json"])   # editor/ 는 안 받음
         with open(os.path.join(self.staged, "version.json"), encoding="utf-8") as f:
             self.assertEqual(json.load(f), {"id": self.TAG, "label": self.TAG})
 

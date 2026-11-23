@@ -8,8 +8,10 @@
 - 런처(exe) 자체: 실행 중에 최신 Release 의 dogani-setup.exe 를 받아 두고(stage_launcher),
   다음에 켤 때 stage() 가 조용히 설치한 뒤 이 프로세스를 끝냄(apply_launcher). 설치가 끝나면 설치 파일이 새 exe 를 띄움.
   런처는 이 파일의 stage() 만 부르므로, 이 기능은 예전 런처에도 태그 업데이트만으로 들어감.
+- 받은 태그는 배포 서명(codesign.py, SIGN_KEYS)이 맞아야 적용.
 """
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -31,6 +33,41 @@ FROZEN = getattr(sys, "frozen", False)
 NO_WINDOW = 0x08000000
 TAG_RE = re.compile(r"^v\d{2}\.\d{2}\.\d{2}\.\d{2}$")
 UA = {"User-Agent": "dogani-updater"}
+# 배포 서명 공개키 (codesign.py). 받은 태그는 이 중 하나로 서명돼야 적용. 키를 바꿀 땐 예전 키로 서명한 태그에서 더함
+SIGN_KEYS = ("e1a0c4e34e5bb19ab12829abaf71e591e8bbe65a2e807c26c42971b16ffe0949",)
+
+
+REJECTED_FILE = CACHE_DIR + ".rejected"   # 서명이 안 맞아 거절한 태그: 더 새 태그가 나올 때까지 켤 때마다 다시 받지 않음
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def _write_text(path, text):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(path + ".tmp", path)
+    except OSError:
+        pass
+
+
+class SignatureError(Exception):
+    """서명이 안 맞는 태그 → 런처가 launcher.log 에 남김 (조용히 False 로 넘기면 안 받는 이유를 모름)"""
+
+
+def _codesign():
+    """런처가 이 파일을 경로로 불러 sys.path 에 이 폴더가 없음 → 같은 폴더 codesign.py 도 경로로, sys.modules 에 안 올림"""
+    spec = importlib.util.spec_from_file_location("_updater_codesign", os.path.join(CODE_DIR, "codesign.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 SETUP_DIR = os.path.join(CONFIG_DIR, "setup")  # 받아 둔 설치 파일
 SETUP_EXE = os.path.join(SETUP_DIR, "dogani-setup.exe")
@@ -84,31 +121,35 @@ def latest_tag(timeout=5):
 
 def stage(timeout=20):
     """최신 태그의 app/ 을 STAGED_DIR 에 받아 둔다. 받았으면 True.
+    release.sig 가 SIGN_KEYS 로 그 태그에 서명돼 있지 않으면 SignatureError (받지 않음).
     런처가 켤 때 dogani 보다 먼저 부르는 유일한 함수라 받아 둔 런처 설치도 여기서 시작함"""
     if apply_launcher():
         os._exit(0)  # 설치 파일이 dogani.exe 를 덮어써야 하므로 바로 끝냄 (mutex 도 아직 안 잡았음)
     tag = latest_tag(5)
-    if not tag or tag <= current_version().get("id", ""):
+    if not tag or tag <= current_version().get("id", "") or tag == _read_text(REJECTED_FILE):
         return False
     try:
         data = _get(f"https://codeload.github.com/{REPO}/zip/refs/tags/{tag}", timeout)
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            prefix = z.namelist()[0].split("/")[0] + "/app/"  # dogani-v26.../app/...
+            cs = _codesign()
+            files = {n[len(prefix):]: z.read(n) for n in z.namelist() if n.startswith(prefix)
+                     and (cs.wanted(n[len(prefix):]) or n[len(prefix):] == cs.SIG_NAME)}
+        if "dogani.py" not in files or any(".." in rel.split("/") or "\\" in rel or ":" in rel for rel in files):
+            return False
+        # 풀기 전에, 그리고 받아 둔 app.new 를 지우기 전에: 서명 안 맞는 태그가 맞는 업데이트를 밀어내지 않게
+        err = cs.check(tag, files, SIGN_KEYS)
+        if err:
+            _write_text(REJECTED_FILE, tag)
+            raise SignatureError(f"{tag}: {err}")
         tmp = STAGED_DIR + ".tmp"
         shutil.rmtree(tmp, ignore_errors=True)
         shutil.rmtree(STAGED_DIR, ignore_errors=True)
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
-            prefix = z.namelist()[0].split("/")[0] + "/app/"  # dogani-v26.../app/...
-            names = [n for n in z.namelist() if n.startswith(prefix) and not n.endswith("/")
-                     and not n[len(prefix):].startswith("editor/")]
-            if prefix + "dogani.py" not in names:
-                return False
-            for n in names:
-                rel = n[len(prefix):]
-                if ".." in rel.split("/"):
-                    return False
-                dest = os.path.join(tmp, *rel.split("/"))
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                with open(dest, "wb") as f:
-                    f.write(z.read(n))
+        for rel, data in files.items():
+            dest = os.path.join(tmp, *rel.split("/"))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(data)
         # version.json 은 마지막에 (다 받았다는 표시)
         with open(os.path.join(tmp, "version.json"), "w", encoding="utf-8") as f:
             json.dump({"id": tag, "label": tag}, f, ensure_ascii=False)
