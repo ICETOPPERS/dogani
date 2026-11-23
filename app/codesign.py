@@ -2,7 +2,8 @@
 
 - 서명하는 쪽: tools/sign_release.py (개인 키는 저장소 밖, 배포하는 PC 에만)
 - 확인하는 쪽: updater.stage() 가 받은 zip 을 풀기 전에 check() → 지금 실행 중인 코드의 공개키로만 확인하므로
-  GitHub 계정이나 태그가 털려도 개인 키 없이는 동료 PC 에서 코드가 실행되지 않음.
+  GitHub 계정이나 태그가 털려도 개인 키 없이는 받은 코드(app/)가 동료 PC 에서 실행되지 않음.
+  단 런처 설치 파일(Release 의 dogani-setup.exe, updater.apply_launcher)은 서명 대상이 아님.
 - zip 바이트가 아니라 파일 내용을 서명: GitHub zip 은 바이트가 같다는 보장이 없고 .gitattributes(*.bat eol=crlf)로
   줄바꿈이 바뀌어 나옴 → 글자 파일(TEXT_EXTS)은 해시 전에 CRLF 를 LF 로 맞춤.
 - 태그 이름도 서명에 넣음: 예전 서명본을 새 태그로 다시 올려 예전 코드로 되돌리는 것을 막음.

@@ -163,6 +163,7 @@ class StageTest(unittest.TestCase):
                              "app/release.sig": codesign.make(self.TAG, app, TEST_KEY)})
         self.patch("SIGN_KEYS", (TEST_PUB,))
         self.patch("STAGED_DIR", self.staged)
+        self.patch("REJECTED_FILE", os.path.join(self.tmp, "app.rejected"))   # 거절 기억이 다른 시험으로 새지 않게
         self.patch("latest_tag", lambda timeout=5: self.TAG)
         self.patch("current_version", lambda: {"id": "v26.11.20.01"})
         self.patch("_get", lambda url, timeout: self.zip)
