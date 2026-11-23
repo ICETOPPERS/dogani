@@ -121,7 +121,7 @@ app\run.bat
 
 `app\run.bat --dir "D:\업무" --port 8765` 처럼 스페이스 폴더와 포트를 지정할 수 있습니다. 소스로 실행할 때는 자동 업데이트를 받지 않습니다. UI 파일을 저장하면 창이 새로 고쳐지고, 파이썬 파일을 저장하면 앱이 다시 시작됩니다.
 
-자동 시험은 `tests/` 에 있습니다. 저장소 루트에서 `python -m unittest discover -s tests -v`(서버 동기화·인증·파서·설정 옮기기·업데이트), `node --test tests/`(노트 합치기·일정 줄 쓰기·정규식), `python tests/e2e_ui.py`(화면 2개와 서버, 약 1분)를 실행합니다.
+자동 시험은 `tests/` 에 있습니다. 저장소 루트에서 `python -m unittest discover -s tests -v`(서버 동기화·인증·파서·설정 옮기기·업데이트·런처), `node --test tests/`(노트 합치기·일정 줄 쓰기·정규식), `python tests/e2e_ui.py`(화면 2개와 서버, 약 1분)를 실행합니다.
 
 ### 편집기 빌드
 
@@ -129,7 +129,7 @@ app\run.bat
 
 ### exe 빌드
 
-`build.bat` 을 실행하면 `dist\dogani\` 폴더에 실행 파일이 만들어집니다. 이 폴더를 통째로 복사해 `dogani.exe` 를 실행하면 됩니다. 설치 파일은 Inno Setup으로 `installer.iss` 를 컴파일해 만듭니다.
+`build.bat` 을 실행하면 `dist\dogani\` 폴더에 실행 파일이 만들어집니다. 빌드에는 Python 3.13이 필요합니다. 이 폴더를 통째로 복사해 `dogani.exe` 를 실행하면 됩니다. 설치 파일은 Inno Setup으로 `installer.iss` 를 컴파일해 만듭니다.
 
 exe는 앱 코드를 담고 있지 않고 실행할 때 내려받습니다. 따라서 `app\deps.py` 에 외부 라이브러리를 추가했거나 `app\launcher.py` 를 고쳤을 때만 exe를 다시 빌드하면 됩니다.
 

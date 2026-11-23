@@ -144,7 +144,10 @@ Ed25519 개인키 `sign_key` 와 초대장 목록 `invites` 를 둠. 호스트 �
 - GitHub에 버전 태그(vYY.MM.DD.NN) push 시 dogani 런처가 태그의 `app/` 디렉터리를 자동으로 내려받음. editor는 빠짐.
 - 런처는 켤 때 한 번 최대 5초 동안 확인함. 실행 중에는 확인하지 않음.
 - 소스 실행은 업데이트를 받지 않음.
+- 받은 코드가 import 중에 죽으면 그 폴더에서 올라온 모듈을 모두 내리고 같은 프로세스에서 내장 코드로 실행함. 시작(`main()`) 중에 죽으면 내장 코드로 새 프로세스를 띄우고(`DOGANI_SAFE=1`, 업데이트 건너뜀) 앞 프로세스는 끝냄. 어느 경우든 그 버전을 `%APPDATA%\dogani\app.bad` 에 적어 다음 실행부터 건너뛰고, 같은 태그는 받지도 바꿔 끼우지도 않음(폴더는 남김, 버전을 모르면 지움). 다시 띄운 내장 코드까지 시작하다 죽으면 환경 탓으로 보고 `app.bad` 를 지움.
+- 런처 오류(업데이트 확인 실패·받은 코드·내장 코드 실패)는 `%APPDATA%\dogani\launcher.log` 에 traceback 과 함께 남김. 256KB 를 넘으면 새로 씀.
 - `deps.py` 나 `launcher.py` 를 고치면 exe와 설치 파일을 다시 빌드해 배포해야 함.
+- 빌드는 Python 3.13(`%ProgramFiles%\Python313`, 없으면 `py -3.13`)과 `requirements.txt` 의 고정 버전, PyInstaller 6.22.3 으로 함.
 
 ## 7. UI
 
