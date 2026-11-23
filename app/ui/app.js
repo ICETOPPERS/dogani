@@ -164,7 +164,7 @@
   const spaceByKey = (k) => state.spaces.find((s) => s.key === k) || (state.space && state.space.key === k ? state.space : null);
   /** 일정을 읽을 수 있는 스페이스 (트레이 메뉴 순서 그대로, 탭을 바꿔도 순서 고정). 다시 로그인 필요(blocked)·꺼진 항목은 뺌 */
   function schedSpaces() {
-    return state.spaces.length ? state.spaces.filter((s) => s.server && !s.disabled && s.status !== "blocked")
+    return state.spaces.length ? state.spaces.filter((s) => s.server && s.status !== "blocked")
       : state.space ? [state.space] : [];
   }
   const shownSpaces = () => schedSpaces().filter((s) => !state.calHidden.has(s.key));

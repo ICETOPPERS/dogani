@@ -82,7 +82,7 @@ Windows 전용 단일 프로그램. 노트 서버, 오버레이 뷰어, 트레�
 ### 3.3 스페이스 설정 `.dogani/`
 
 - `space.json`: `{id, created}`. id는 16자리 16진수이며 키 파일 이름으로 쓰임.
-- `team.json`: 모든 내 스페이스에 있음 (처음 열 때 만듦, 주인 = 관리자). `name, default_perm, groups{id: name, perm}, members{id: name, admin, perm, groups[], min_iat, joined, addr, last_seen}`. 팀원 `perm` 은 개인 지정(`read`|`write`)일 때만 있고, 없으면 그룹을 따름. 그룹·개인 지정이 없는 예전 파일은 그대로 모두 write 로 읽힘.
+- `team.json`: 모든 내 스페이스에 있음 (처음 열 때 만듦, 주인 = 관리자). `name, default_perm, groups{id: name, perm}, members{id: name, admin, perm, groups[], min_iat, joined, last_seen}`. 팀원 `perm` 은 개인 지정(`read`|`write`)일 때만 있고, 없으면 그룹을 따름. 그룹·개인 지정이 없는 예전 파일은 그대로 모두 write 로 읽힘.
 
 ### 3.4 PC 설정 `%APPDATA%\dogani\dogani.json`
 

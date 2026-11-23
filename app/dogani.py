@@ -1723,9 +1723,9 @@ class doganiApp(QObject):
 
     def space_command(self, name, host, rest):
         """내 PC 스페이스의 초대장·팀원 명령 (트레이)"""
-        if name in ("new_invite", "reinvite", "copy_invite"):
+        if name in ("new_invite", "reinvite"):
             try:
-                code = rest[0] if name == "copy_invite" else host.create_invite(rest[0] if name == "reinvite" else None)
+                code = host.create_invite(rest[0] if name == "reinvite" else None)
             except TeamError as e:
                 return self.tray.notify(e.message)
             QGuiApplication.clipboard().setText(f"dogani 스페이스 참여\n호스트 주소: {self.share.address}\n초대장 코드: {code}")
@@ -1774,8 +1774,6 @@ class doganiApp(QObject):
             self.toggle_panel(arg)
         elif name == "cycle_panels":
             self.cycle_panels()
-        elif name == "select_space":
-            self.select_space(arg)
         elif name == "rename":
             self.rename()
         elif name == "create_space":
@@ -1796,7 +1794,7 @@ class doganiApp(QObject):
             e = self.entry(arg)
             if e and e["kind"] == "local" and os.path.isdir(e["dir"]):
                 os.startfile(e["dir"])
-        elif name in ("new_invite", "reinvite", "copy_invite", "cancel_invite", "ask_cancel_invite", "kick", "perm",
+        elif name in ("new_invite", "reinvite", "cancel_invite", "ask_cancel_invite", "kick", "perm",
                       "create_group", "rename_group", "group_perm", "default_perm", "delete_group", "member_group"):
             sid, *rest = arg if isinstance(arg, tuple) else (arg,)
             host = self.local_host(sid)

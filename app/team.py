@@ -135,7 +135,7 @@ class TeamHost:
     def __init__(self, root, key_dir, owner_name):
         from server import Hub, NoteStore  # 순환 import 방지
         self.lock = threading.Lock()
-        self.root = self.notes_dir = root
+        self.root = root
         fresh = not any(n != space.META_DIR for n in os.listdir(root))   # 새로 만든 빈 폴더
         meta = space.open_space(root)
         self.space_id = meta["id"]
@@ -226,12 +226,9 @@ class TeamHost:
             mid = secrets.token_hex(4)
             self.data["members"][mid] = {"name": name, "admin": True, "min_iat": 0,
                                          "joined": dt.datetime.now().isoformat(timespec="seconds"),
-                                         "addr": "", "last_seen": 0}
+                                         "last_seen": 0}
             self._save()
             return mid
-
-    def owner_token(self):
-        return make_token(self.data["sign_key"], self.owner_id)
 
     def prove(self, nonce):
         """팀원이 보낸 nonce 에 서명 → 팀원은 토큰을 보내기 전에 공개키로 이 PC 가 진짜 호스트인지 확인 (verify_hello)"""
@@ -322,7 +319,7 @@ class TeamHost:
                                         "본인이면 관리자에게 '다시 초대'를 부탁하세요.", 409)
                     mid = secrets.token_hex(4)
                     self.data["members"][mid] = {
-                        "name": name, "admin": False, "min_iat": 0, "addr": "", "last_seen": 0,
+                        "name": name, "admin": False, "min_iat": 0, "last_seen": 0,
                         "joined": dt.datetime.now().isoformat(timespec="seconds")}
                     iat = None
                 self.data["invites"].pop(code, None)
@@ -352,14 +349,11 @@ class TeamHost:
                 return None
         return mid
 
-    def touch(self, mid, addr):
+    def touch(self, mid):
         with self.lock:
             m = self.data["members"].get(mid)
             if m:
                 m["last_seen"] = time.time()
-                if m.get("addr") != addr:
-                    m["addr"] = addr
-                    self._save()
 
     def update_profile(self, mid, name=None):
         with self.lock:
@@ -569,7 +563,7 @@ class TeamHost:
         now = time.time()
         with self.lock:
             groups = self.data["groups"]
-            out = [{"id": mid, "name": m["name"], "addr": m.get("addr", ""), "admin": bool(m.get("admin")),
+            out = [{"id": mid, "name": m["name"], "admin": bool(m.get("admin")),
                     "perm": self._perm(m), "perm_set": m.get("perm", "auto") if not m.get("admin") else "write",
                     "groups": [groups[g]["name"] for g in m.get("groups") or () if g in groups],
                     "group_ids": [g for g in m.get("groups") or () if g in groups],

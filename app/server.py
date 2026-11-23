@@ -18,11 +18,11 @@ import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import schedule
 
-from team import FAIL_LIMIT, FAIL_LOCK, NAME_MAX, TeamError
+from team import FAIL_LIMIT, FAIL_LOCK, TeamError
 
 POLL_INTERVAL = 1.0      # 파일 변경 감시 주기(초)
 HEARTBEAT_INTERVAL = 15  # SSE keep-alive 주기(초)
@@ -406,12 +406,9 @@ class Hub:
 class Ctx:
     """요청 하나의 접속자 정보"""
 
-    def __init__(self, ip, host, owner, user, member):
+    def __init__(self, ip, owner):
         self.ip = ip
-        self.host = host        # 상대 PC 이름
-        self.owner = owner      # 같은 PC (= 나)
-        self.user = user        # 상대가 보낸 표시 이름
-        self.member = member    # 토큰으로 확인된 팀원 (id, 이름) 또는 None
+        self.owner = owner      # 같은 PC (= 나): 루프백 + 주인 비밀값
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -453,10 +450,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "client_only", "message": "dogani 로만 볼 수 있습니다."}, 403)
             return None
         share = self.share
-        owner = share.is_owner(ip, self.headers.get(OWNER_HEADER, ""))
-        host = self.headers.get(HOST_HEADER, "")[:64]
-        user = unquote(self.headers.get(USER_HEADER, ""))[:NAME_MAX]
-        return Ctx(ip, host, owner, user, None)
+        return Ctx(ip, share.is_owner(ip, self.headers.get(OWNER_HEADER, "")))
 
     def _body(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -541,7 +535,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"error": "not_member", "message": "팀원만 볼 수 있습니다."}, 401)
         if path == "/me":
             # 팀원 PC 가 주기적으로 보내는 신호 (접속 중 표시) → 팀원 목록을 받는다
-            team.touch(mid, "")
+            team.touch(mid)
             members = team.members()
             me = next((m for m in members if m["id"] == mid), None)
             # pc = 호스트 PC 이름: 호스트 IP 가 바뀌면 팀원이 이 이름으로 다시 찾음
@@ -553,8 +547,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"name": name})
         writable = team.can_write(mid)
         if path == "/info":
-            return self._send_json({"app": "dogani", "name": team.name, "kind": "space",
-                                    "writable": writable, "today": dt.date.today().isoformat()})
+            return self._send_json({"app": "dogani", "name": team.name, "writable": writable,
+                                    "today": dt.date.today().isoformat()})
         if path == "/events":
             return self._stream(team.hub, ctx)
         if path == "/schedule" and method == "GET":
@@ -596,8 +590,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/note":
             d = dt.date.fromisoformat(qs.get("date", [dt.date.today().isoformat()])[0])
             self._send_json(store.note(d))
-        elif path == "/schedule":
-            self._send_json({"events": store.schedule(), "decos": store.decorations()})
         elif path == "/sched-doc":
             self._send_json(store.sched_doc())
         elif path == "/month":
