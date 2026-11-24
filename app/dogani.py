@@ -66,7 +66,11 @@ DEFAULT_CONFIG = {
     "windows": {},        # note / cal -> {"pos", "panel", "open"}
     "wake_click": False,  # True: 다른 프로그램 사용 중엔 굳어 있다가 클릭하면 깨어남 (창은 항상 바탕화면에 고정)
     "theme": "light",
+    "ui": {},             # 이 PC 의 화면 설정 (글자 크기·필터 자리·묶음 접힘) — 웹 프로필이 시크릿이라 localStorage 대신
 }
+
+UI_PREF_KEYS = {"fz", "calSide", "calSecs"}   # JS Prefs 키. 모르는 키는 받지 않음 (설정 파일이 마구 커지지 않게)
+UI_PREF_MAX = 4000                            # 값 하나의 JSON 길이 한도
 
 
 # ---------------------------------------------------------------- config
@@ -80,6 +84,9 @@ def load_config():
             w["open"] = False
     if not isinstance(cfg.get("cal_hidden"), list):
         cfg["cal_hidden"] = []
+    if not isinstance(cfg.get("ui"), dict):
+        cfg["ui"] = {}
+    cfg["ui"] = {k: v for k, v in cfg["ui"].items() if k in UI_PREF_KEYS}
     migrate_spaces(cfg)
     if not isinstance(cfg.get("spaces"), list):
         cfg["spaces"] = []
@@ -415,6 +422,13 @@ class Tray(QObject):
         return items + [Item("스페이스 만들기...", self.emit("create_space"), enabled=bool(app.share)),
                         Item("다른 스페이스에 참여하기...", self.emit("join_space"))]
 
+    def screen_menu(self):
+        """모니터 목록. 화면 설정이 꼬여 창이 안 보일 때 꺼내 오는 길.
+        트레이 스레드에서는 Qt 화면 정보를 직접 읽지 않고 메인 스레드가 만들어 둔 목록을 씀"""
+        Item = pystray.MenuItem
+        return [Item(f"({n}) {amp(label)}", self.emit("move_to_screen", key))
+                for n, (key, label) in enumerate(self.app.monitors, 1)]
+
     def build_menu(self):
         Item = pystray.MenuItem
         app, cfg = self.app, self.app.cfg
@@ -423,6 +437,7 @@ class Tray(QObject):
             Item("창 순환", self.emit("cycle_panels"), default=True, visible=False),
             Item("할일 표시", self.emit("toggle_panel", "note"), checked=lambda i: "note" in app.panels),
             Item("달력 표시", self.emit("toggle_panel", "cal"), checked=lambda i: "cal" in app.panels),
+            Item("모니터로 불러오기", pystray.Menu(*self.screen_menu())),
             pystray.Menu.SEPARATOR,
             Item(f"내 이름: {cfg['name']}", self.emit("rename")),
             pystray.Menu.SEPARATOR,
@@ -611,6 +626,11 @@ class Bridge(QObject):
         if isinstance(keys, list):
             self.win.app.set_cal_hidden(keys)
 
+    @Slot(str, str)
+    def setPref(self, key, value_json):
+        if set_ui_pref(self.win.app.cfg, key, value_json):
+            self.win.app.save_later()
+
     @Slot(result=str)
     def getUnsaved(self):
         return json.dumps(load_unsaved())
@@ -681,16 +701,42 @@ def register_ui_scheme():
     QWebEngineUrlScheme.registerScheme(scheme)
 
 
+def set_ui_pref(cfg, key, raw):
+    """JS Prefs.set → 설정의 ui 에 저장. 모르는 키·깨진 JSON·너무 긴 값은 버림(False)"""
+    if key not in UI_PREF_KEYS or not isinstance(raw, str) or len(raw) > UI_PREF_MAX:
+        return False
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return False
+    cfg["ui"][key] = value
+    return True
+
+
+def prefs_js(cfg):
+    """prefs-data.js: 페이지 스크립트보다 먼저 읽혀서 Prefs.get 이 처음부터 값을 갖게 함 (브리지는 비동기라 늦음)"""
+    return ("window.doganiPrefs = " + json.dumps(cfg.get("ui") or {}) + ";\n").encode("utf-8")
+
+
 class UiSchemeHandler(QWebEngineUrlSchemeHandler):
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+
     def requestStarted(self, job):
         rel = job.requestUrl().path().lstrip("/") or "index.html"
+        if rel == "prefs-data.js":
+            return self._reply(job, MIME_TYPES[".js"], prefs_js(self.app.cfg))
         path = os.path.normpath(os.path.join(UI_DIR, rel))
         mime = MIME_TYPES.get(os.path.splitext(path)[1].lower())
         if not path.startswith(UI_DIR + os.sep) or not mime or not os.path.isfile(path):
             job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
             return
         with open(path, "rb") as f:
-            data = f.read()
+            self._reply(job, mime, f.read())
+
+    @staticmethod
+    def _reply(job, mime, data):
         buf = QBuffer(job)
         buf.setData(QByteArray(data))
         buf.open(QIODevice.OpenModeFlag.ReadOnly)
@@ -924,6 +970,7 @@ class Overlay(QWidget):
         rx, ry = rel[key] if key in screens else rel.get(screen_key(screen), rel[key])
         self._placing = True
         try:
+            self.fit_size(screen_key(screen))
             self.move(geo.left() + rx, geo.top() + ry)
             self.keep_on_screen(QPoint(geo.left() + 1, geo.top() + 1) if self._off_screen() else None)
         finally:
@@ -941,13 +988,32 @@ class Overlay(QWidget):
             self.move(pos[0], pos[1])
             self.keep_on_screen()
             return
-        # 처음 여는 창: 주 모니터 오른쪽 위. 할일 창은 맨 오른쪽, 달력 창은 그 왼쪽
-        geo = QGuiApplication.primaryScreen().availableGeometry()
+        self.place_default(QGuiApplication.primaryScreen())
+
+    def place_default(self, screen):
+        """처음 여는 창 자리: 그 모니터 오른쪽 위. 할일 창은 맨 오른쪽, 달력 창은 그 왼쪽"""
+        geo = screen.availableGeometry()
         x = geo.right() - PANEL_DEFAULT_SIZE["note"][0] - 20
         if self.mode == "cal":
             x -= self.width() - 10
         self.move(max(geo.left(), x), geo.top() + 20)
         self.keep_on_screen(self.pos())
+
+    def move_to_screen(self, screen):
+        """트레이 '모니터로 불러오기': 그 모니터에서 기억한 자리, 없으면 기본 자리로.
+        moveEvent 가 이 모니터를 새로 기억하므로 다음 실행·모니터 변경 때도 여기로 온다."""
+        key = screen_key(screen)
+        self._placing = True
+        try:
+            self.fit_size(key)
+        finally:
+            self._placing = False
+        rel = (self.wcfg.get("screens") or {}).get(key)
+        if not rel:
+            return self.place_default(screen)
+        geo = screen.availableGeometry()
+        self.move(geo.left() + rel[0], geo.top() + rel[1])
+        self.keep_on_screen(QPoint(geo.left() + 1, geo.top() + 1) if self._off_screen() else None)
 
     # -- size
     def start_resize(self, edges):
@@ -987,15 +1053,32 @@ class Overlay(QWidget):
         screen = QGuiApplication.screenAt(anchor + QPoint(30, 20)) or QGuiApplication.primaryScreen()
         geo = screen.availableGeometry()
         # 큰 화면(RDP QHD 등)에서 키운 창이 작은 화면에서 아래·오른쪽이 잘려 가장자리를 못 잡지 않게 줄임
+        # 이 줄임은 저장하지 않음: 큰 모니터로 돌아가면 원래 크기로 (fit_size)
         if self.width() > geo.width() or self.height() > geo.height():
-            self.resize(min(self.width(), geo.width()), min(self.height(), geo.height()))
+            placing, self._placing = getattr(self, "_placing", False), True
+            try:
+                self.resize(min(self.width(), geo.width()), min(self.height(), geo.height()))
+            finally:
+                self._placing = placing
         x = min(self.x(), geo.right() - self.width() + 1)
         y = min(self.y(), geo.bottom() - self.height() + 1)
         self.move(max(geo.left(), x), max(geo.top(), y))
 
+    def fit_size(self, key):
+        """그 모니터에서 마지막으로 고른 크기로 (없으면 마지막으로 직접 고른 크기)"""
+        w, h = (self.wcfg.get("sizes") or {}).get(key) or self.wcfg.get("panel") or (self.width(), self.height())
+        mw, mh = PANEL_MIN_SIZE[self.mode]
+        if (w, h) != (self.width(), self.height()):
+            self.resize(max(w, mw), max(h, mh))
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if getattr(self, "_placing", False) or self.app.screens_changing:
+            return  # 작은 모니터에 맞춘 자동 줄임·모니터 연결/해제로 바뀐 크기는 기억하지 않음
         self.wcfg["panel"] = [self.width(), self.height()]
+        screen = QGuiApplication.screenAt(self.pos() + QPoint(30, 20))
+        if screen:
+            self.wcfg.setdefault("sizes", {})[screen_key(screen)] = [self.width(), self.height()]
         self.app.save_later()
 
     def moveEvent(self, event):
@@ -1042,6 +1125,20 @@ def screen_key(screen):
     return key
 
 
+def screen_label(screen):
+    """트레이에 보일 모니터 이름: 모델명(없으면 DISPLAYn) · 해상도 · 주 모니터 표시"""
+    name = screen.model() or screen.name().replace("\\\\.\\", "")
+    size = screen.size()
+    main = " · 주 모니터" if screen == QGuiApplication.primaryScreen() else ""
+    return f"{name}  {size.width()}×{size.height()}{main}"
+
+
+def screen_list():
+    """[(키, 표시 이름)] 왼쪽 모니터부터. 번호가 실제 배치 순서와 맞게 좌표로 정렬"""
+    screens = sorted(QGuiApplication.screens(), key=lambda s: (s.geometry().left(), s.geometry().top()))
+    return [(screen_key(s), screen_label(s)) for s in screens]
+
+
 class doganiApp(QObject):
     team_result = Signal(int, object)   # 팀 호스트 응답 (작업 스레드 → 메인 스레드)
     bg_result = Signal(object)          # run_bg 결과 (done, 결과)
@@ -1066,6 +1163,7 @@ class doganiApp(QObject):
         qapp.screenAdded.connect(self.watch_screen)
         for s in qapp.screens():
             self.watch_screen(s)
+        self.monitors = screen_list()   # 트레이 '모니터로 불러오기' 목록 (메인 스레드에서만 갱신)
         setup_profile(self)
 
         self.share = ShareServer(cfg["port"], cfg["name"])
@@ -1095,10 +1193,22 @@ class doganiApp(QObject):
         screen.availableGeometryChanged.connect(self.on_screens_changed)
 
     def on_screens_settled(self):
+        self.monitors = screen_list()
         for ov in self.windows():
             if not ov.place_on_saved_screen():
                 ov.keep_on_screen()
         self.screens_changing = False
+
+    def move_to_screen(self, key):
+        """열린 창을 모두 그 모니터로 (아무 창도 안 열려 있으면 할일 창을 열어서)"""
+        screen = next((s for s in QGuiApplication.screens() if screen_key(s) == key), None)
+        if not screen:
+            return   # 메뉴를 연 사이 모니터가 빠짐
+        if not self.panels:
+            self.show_panel("note")
+        for win in self.windows():
+            win.move_to_screen(screen)
+            win.reveal()
 
     def win_cfg(self, mode):
         return self.cfg["windows"].setdefault(mode, {"pos": None, "panel": None, "open": False})
@@ -1805,6 +1915,8 @@ class doganiApp(QObject):
             self.toggle_panel(arg)
         elif name == "cycle_panels":
             self.cycle_panels()
+        elif name == "move_to_screen":
+            self.move_to_screen(arg)
         elif name == "rename":
             self.rename()
         elif name == "create_space":

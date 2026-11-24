@@ -372,14 +372,13 @@
       view.classList.toggle("cal-side", side);
       btn.title = side ? "필터를 달력 위에 보기" : "필터를 오른쪽에 세로로 보기";
     };
-    let side = false;
-    try { side = localStorage.getItem("dogani.calSide") === "1"; } catch (e) {}
+    let side = Prefs.get("calSide") === true;
     apply(side);
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       side = !side;
       apply(side);
-      try { localStorage.setItem("dogani.calSide", side ? "1" : "0"); } catch (e2) {}
+      Prefs.set("calSide", side);
     });
   })();
 
@@ -387,14 +386,12 @@
   (function initSections() {
     const box = document.querySelector("#view-cal .cal-filters");
     if (!box) return;
-    const KEY = "dogani.calSecs";
     const secs = () => Array.from(box.querySelectorAll(":scope > .cal-sec"));
     const save = () => {
       const v = { order: secs().map((s) => s.dataset.sec), folded: secs().filter((s) => s.classList.contains("folded")).map((s) => s.dataset.sec) };
-      try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {}
+      Prefs.set("calSecs", v);
     };
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
+    const saved = Prefs.get("calSecs", null);
     if (saved && Array.isArray(saved.order)) {
       // 기억한 순서대로 맨 끝으로 옮김 → 모르는 묶음(새로 생긴 것)은 앞쪽에 남음
       for (const k of saved.order) { const s = box.querySelector(`:scope > .cal-sec[data-sec="${k}"]`); if (s) box.appendChild(s); }

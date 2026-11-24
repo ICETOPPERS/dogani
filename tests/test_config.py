@@ -80,6 +80,23 @@ class LoadConfigTest(TempHome):
         self.assertEqual(dogani.load_config()["name"], "한글 이름")
         self.assertFalse(os.path.exists(dogani.CONFIG_PATH + ".tmp"))
 
+    def test_ui_prefs(self):
+        """화면 설정(ui): 아는 키만 받고, 깨진 값은 버리고, 껐다 켜도 남음 (웹 프로필이 시크릿이라 여기에 저장)"""
+        self.put({"ui": "x"})
+        self.assertEqual(dogani.load_config()["ui"], {})
+        self.put({"ui": {"fz": 1.2, "unknown": 1}})
+        cfg = dogani.load_config()
+        self.assertEqual(cfg["ui"], {"fz": 1.2})
+        self.assertTrue(dogani.set_ui_pref(cfg, "calSide", "true"))
+        self.assertTrue(dogani.set_ui_pref(cfg, "calSecs", json.dumps({"order": ["tag"], "folded": []})))
+        self.assertFalse(dogani.set_ui_pref(cfg, "other", "1"))                       # 모르는 키
+        self.assertFalse(dogani.set_ui_pref(cfg, "fz", "{broken"))                    # 깨진 JSON
+        self.assertFalse(dogani.set_ui_pref(cfg, "calSecs", json.dumps("x" * 5000)))  # 너무 긺
+        dogani.save_config(cfg)
+        cfg = dogani.load_config()
+        self.assertEqual(cfg["ui"], {"fz": 1.2, "calSide": True, "calSecs": {"order": ["tag"], "folded": []}})
+        self.assertEqual(dogani.prefs_js(cfg), ("window.doganiPrefs = " + json.dumps(cfg["ui"]) + ";\n").encode())
+
 
 class MigrateTest(unittest.TestCase):
     """v26.11.18 이전 설정(개인 하나 + 팀 하나) → spaces 목록. 예전 키는 남김(예전 exe 와 번갈아 켜도 되게)"""

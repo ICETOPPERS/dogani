@@ -2080,6 +2080,7 @@
   if (window.qt && window.QWebChannel) {
     new QWebChannel(qt.webChannelTransport, (channel) => {
       bridge = channel.objects.bridge;
+      if (bridge.setPref) Prefs.connect((k, j) => bridge.setPref(k, j));
       const start = () => bridge.getConfig((json) => App.configure(JSON.parse(json)));
       if (bridge.getUnsaved) bridge.getUnsaved((json) => { try { pendMem = JSON.parse(json) || {}; } catch (e) { pendMem = {}; } start(); });
       else start();
@@ -2097,13 +2098,13 @@
 
 // Ctrl+휠 = 글자 크기만 (기본 페이지 확대는 보더·여백까지 커져서 막음). 75~150%, Ctrl+0 원래대로
 (() => {
-  const KEY = "dogani-fz", MIN = 0.75, MAX = 1.5, STEP = 0.05;
+  const MIN = 0.75, MAX = 1.5, STEP = 0.05;
   let fz = 1;
-  try { fz = Math.min(MAX, Math.max(MIN, parseFloat(localStorage.getItem(KEY)) || 1)); } catch {}
+  fz = Math.min(MAX, Math.max(MIN, parseFloat(Prefs.get("fz")) || 1));
   const apply = (v) => {
     fz = Math.round(Math.min(MAX, Math.max(MIN, v)) * 100) / 100;
     document.documentElement.style.setProperty("--fz", fz);
-    try { localStorage.setItem(KEY, fz); } catch {}
+    Prefs.set("fz", fz);
     window.dispatchEvent(new Event("dogani-fz"));  // 편집기 줄 높이 다시 재기 (editor.js)
   };
   apply(fz);
