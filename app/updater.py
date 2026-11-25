@@ -23,7 +23,7 @@ import urllib.request
 import winreg
 import zipfile
 
-REPO = "nodogani/dogani"
+REPO = "icetoppers/dogani"
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(CODE_DIR)
 CONFIG_DIR = os.environ.get("DOGANI_HOME") or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "dogani")

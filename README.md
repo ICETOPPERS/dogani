@@ -13,7 +13,7 @@ dogani는 할일과 일정을 바탕화면에 띄워 두고 그 자리에서 바
 
 ## 설치
 
-[dogani-setup.exe](https://github.com/nodogani/dogani/releases/latest/download/dogani-setup.exe)를 받아 실행합니다. Python은 필요 없고 관리자 권한도 묻지 않습니다. 설치가 끝나면 시작 메뉴에서 dogani를 실행합니다.
+[dogani-setup.exe](https://github.com/icetoppers/dogani/releases/latest/download/dogani-setup.exe)를 받아 실행합니다. Python은 필요 없고 관리자 권한도 묻지 않습니다. 설치가 끝나면 시작 메뉴에서 dogani를 실행합니다.
 
 설치 파일은 처음 한 번만 받으면 됩니다. 이후에는 앱을 켤 때 새 버전을 받아 적용하며, 켜 둔 동안 나온 업데이트는 다음 실행 때 반영됩니다. 설치 파일 자체가 새로 나오면 켜 둔 동안 받아 두었다가 다음에 켤 때 조용히 설치합니다. 설치 파일을 직접 다시 실행해도 기존 설치 위에 덮어 설치됩니다.
 
