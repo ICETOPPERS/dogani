@@ -2,7 +2,7 @@
 
 ## 미커밋 작업
 
-- 레포를 icetoppers/dogani 로 옮김: 업데이트 주소(`updater.py` `REPO`)·README 설치 링크·origin 바꿈. 옛 주소는 GitHub 넘겨주기로 이어짐. 설치된 PC 가 새 태그로 올라온 뒤 옛 조직 nodogani 삭제
+- 레포를 ICETOPPERS/dogani 로 옮김: 업데이트 주소(`updater.py` `REPO`)·README 설치 링크·origin 바꿈. 옛 주소는 GitHub 넘겨주기로 이어짐. 설치된 PC 가 새 태그로 올라온 뒤 옛 조직 nodogani 삭제
   - /code-review (medium) 2026-11-26: 지금 설치 파일·내장 코드에 옛 REPO 가 남음 → 옛 조직 삭제는 런처 재빌드·새 Release 뒤로. 옛 조직을 지우면 이름이 풀려 옛 updater 가 남의 설치 파일을 믿을 수 있음(설치 파일은 서명 검사 없음) → 그때까지 조직 유지. 옛 PC 는 새 REPO 코드 태그를 먼저 받아야 설치 파일 업데이트가 됨(Release 주소 접두사 검사). 옛 주소 codeload zip·tags API 넘겨주기는 직접 확인함(200)
 
 ## 시험
