@@ -158,7 +158,7 @@ Ed25519 개인키 `sign_key` 와 초대장 목록 `invites` 를 둠. 호스트 �
 - 런처 업데이트: exe 가 켜지고 1분 뒤 백그라운드에서 최신 Release 의 `dogani-setup.exe` 를 확인함. 릴리스 태그가 지금 exe 버전(내장 코드 `version.json` 과 `setup.done` 중 큰 값)보다 새것이면 `%APPDATA%\dogani\setup\` 에 받음. 크기와 GitHub `digest`(sha256)가 맞을 때만 남기고, `setup.json`(태그·sha256)은 맨 마지막에 씀.
 - 다음에 켤 때 `updater.stage()` 가 sha256 을 다시 확인한 뒤 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL /SP- /LOG=setup.log /MERGETASKS=(!)autostart` 와 `/RELAUNCH=1` 로 설치를 띄우고, 태그를 `setup.done` 에 적은 다음 런처는 바로 끝남. 설치 파일은 성공하든 실패하든 끝날 때(`DeinitializeSetup`) dogani.exe 를 다시 띄움. 실패하면 Inno 가 되돌려 놓은 예전 exe 가 뜸. 자동 실행은 트레이에서 바꾼 지금 값을 따름.
 - 한 태그는 한 번만 시도함(설치 파일을 띄우지 못했으면 시도로 치지 않음). 남은 설치 파일은 다음 확인 때 치움.
-- Release 는 build.bat 으로 빌드한 그 태그에 닮. 다른 태그에 달면 직접 새로 설치한 PC 가 같은 빌드를 한 번 더 받음. 설치 정보(HKCU Uninstall `InstallLocation`)가 실행 중인 exe 폴더와 다르면(폴더째 복사해 씀) 받지도 설치하지도 않음. 소스 실행도 마찬가지.
+- Release 는 build.bat 으로 빌드한 그 태그에 닮. 다른 태그에 달면 직접 새로 설치한 PC 가 같은 빌드를 한 번 더 받음. Release 는 하나만 두고(이름 `dogani-setup (x64)`), 새로 올리면 예전 것은 지움(태그는 남김). 설치 정보(HKCU Uninstall `InstallLocation`)가 실행 중인 exe 폴더와 다르면(폴더째 복사해 씀) 받지도 설치하지도 않음. 소스 실행도 마찬가지.
 - 이 동작은 `updater.py` 에 있어서, 예전 런처도 태그 업데이트만 받으면 이 기능이 생김.
 - 빌드는 Python 3.13(`%ProgramFiles%\Python313`, 없으면 `py -3.13`)과 `requirements.txt` 의 고정 버전, PyInstaller 6.22.3 으로 함.
 

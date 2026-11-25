@@ -182,7 +182,7 @@ body.writable .task-checkbox { cursor: pointer; }
 ::-webkit-scrollbar-thumb { background: var(--guide); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ------------------------------------------------------------ markdown (Obsidian reading view) */
+/* ------------------------------------------------------------ markdown (읽기 화면) */
 .markdown-rendered {
   flex: 1;
   overflow-y: auto;

@@ -8,7 +8,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const MD = window.ObsidianMarkdown;
+  const MD = window.NoteMarkdown;
   const CAL = window.doganiCalendar;
   const { WD, pad, iso, parseISO, addMonths } = CAL;
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -68,7 +68,7 @@
     not_member: "이 스페이스의 팀원이 아닙니다. 트레이 > 다른 스페이스에 참여하기 로 들어와 주세요.",
     no_space: "그 PC 에 이 스페이스가 없습니다.",
     client_only: "접속 키가 맞지 않습니다. 두 PC 의 dogani 버전을 확인해 주세요.",
-    conflict: "그 사이 옵시디언이나 다른 팀원이 수정해서 저장하지 않았습니다. 다시 불러옵니다.",
+    conflict: "그 사이 파일이 바뀌어 저장하지 않았습니다. 다시 불러옵니다.",
     read_only: "편집 권한이 없습니다.",
     write_failed: "저장에 실패했습니다.",
   };
@@ -605,7 +605,7 @@
 
     /**
      * 저장은 순서대로 하나씩 (자동 저장이 겹치면 mtime 충돌이 나므로). 스페이스·날짜는 부른 시점 기준.
-     * - 충돌(409, 그 사이 옵시디언·다른 팀원이 고침): 서버 것을 다시 받아 줄 단위로 합쳐 다시 저장.
+     * - 충돌(409, 그 사이 파일이 바뀜: 다른 팀원·다른 프로그램): 서버 것을 다시 받아 줄 단위로 합쳐 다시 저장.
      *   같은 줄을 서로 다르게 고쳤을 때만 물어봄 (내 것으로 덮기 / 서버 것 쓰기 + 내 것은 클립보드)
      * - 연결 끊김 등: 내용을 바탕 문서와 같이 보관 → 다시 연결되면(hello) 같은 방식으로 저장
      */
@@ -635,7 +635,7 @@
               if (mine !== content && !adopt(content, mine)) p.doc = { exists: true, content, mtime: -1 };
               if (p.doc.mtime !== -1 && dirty()) { clearTimeout(timer); timer = setTimeout(p.save, 700); }   // 저장 중에 더 쓴 것이 남음
               if (o.loaded) o.loaded(d);
-              o.footer.textContent = mine !== content ? "다른 곳에서 고친 내용과 합쳐 저장했습니다." : "저장했습니다.";
+              o.footer.textContent = mine !== content ? "그 사이 바뀐 내용과 합쳐 저장했습니다." : "저장했습니다.";
             }
             return true;
           } catch (err) { e = err; }
@@ -647,8 +647,8 @@
               const merged = merge3(from.exists ? from.content : "", mine, theirs, eol);
               if (merged !== null) { mine = merged; from = cur; continue; }
               // 같은 줄을 서로 다르게 고침 → 사용자에게
-              if (confirm("그 사이 옵시디언이나 다른 팀원이 같은 줄을 다르게 고쳤습니다.\n\n" +
-                "확인을 누르면 내 내용으로 덮어쓰고, 상대 내용은 클립보드에 복사합니다.\n취소를 누르면 상대 내용을 쓰고, 내 내용은 클립보드에 복사합니다.")) {
+              if (confirm("그 사이 파일의 같은 줄이 다르게 바뀌었습니다.\n\n" +
+                "확인을 누르면 내 내용으로 덮어쓰고, 파일의 내용은 클립보드에 복사합니다.\n취소를 누르면 파일의 내용을 쓰고, 내 내용은 클립보드에 복사합니다.")) {
                 copyText(theirs);
                 from = cur; continue;
               }
@@ -967,7 +967,7 @@
       title: ev.title, tags: ev.off ? [] : ev.tags || [], members: ev.members || [], place: ev.place || "", memo: ev.memo || "",
     };
   }
-  // ---- 할일(노트 체크박스 줄) 날짜: 옵시디언 Tasks 형식 `🛫 시작` `📅 마감` (YYYY-MM-DD)
+  // ---- 할일(노트 체크박스 줄) 날짜: 이모지 날짜 형식 `🛫 시작` `📅 마감` (YYYY-MM-DD)
   let calDrag = "";                   // 할일 창에서 달력에 놓을 수 있는 줄을 끄는 중 = 그 데이터 (파이썬이 App.setCalDrag 로 알려 줌)
   const TASK_DRAG = "dogani-task:";   // 할일 창 손잡이 → 달력 끌어 놓기 (text/plain 앞머리)
   const DECO_DRAG = "dogani-deco:";   // 할일·가로선 아닌 줄 → 달력 장식

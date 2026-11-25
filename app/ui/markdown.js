@@ -16,7 +16,7 @@
     let s = src;
 
     s = s.replace(/(`+)(.+?)\1(?!`)/g, (_, __, code) => keep(`<code>${esc(code)}</code>`));
-    s = s.replace(/%%.*?%%/g, () => keep(""));  // 옵시디언 주석은 숨김
+    s = s.replace(/%%.*?%%/g, () => keep(""));  // %%…%% 주석은 숨김
     s = esc(s);
 
     s = s.replace(/!\[\[([^\]]+?)\]\]/g, (_, target) =>
@@ -70,5 +70,5 @@
     return html + "</tbody></table>";
   }
 
-  global.ObsidianMarkdown = { inline, tableHtml };
+  global.NoteMarkdown = { inline, tableHtml };
 })(window);

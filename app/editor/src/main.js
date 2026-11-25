@@ -1,7 +1,7 @@
 /*
- * dogani 라이브 프리뷰 편집기 (CodeMirror 6 — 옵시디언 편집기와 같은 기반)
+ * dogani 라이브 프리뷰 편집기 (CodeMirror 6)
  *
- * 옵시디언 라이브 프리뷰 흉내:
+ * 라이브 프리뷰:
  *  - 노트 전체가 편집기 하나. 커서/선택이 닿은 서식만 원문 기호(**, ==, [[ ]], # ...)가 보이고 나머지는 렌더링
  *  - 체크박스·글머리표·들여쓰기 가이드·구분선은 위젯, 표는 커서가 밖에 있으면 표로
  *  - 편집기에 포커스가 없으면(읽기 전용 포함) 전부 렌더링된 상태
@@ -65,7 +65,7 @@ class Bullet extends WidgetType {
     return s;
   }
 }
-/** 목록 앞 들여쓰기(탭/스페이스) → 단계마다 고정 폭 + 가이드선 (옵시디언처럼) */
+/** 목록 앞 들여쓰기(탭/스페이스) → 단계마다 고정 폭 + 가이드선 */
 class Indent extends WidgetType {
   /** cont[k] = k 단계 세로선이 이 줄 아래로 이어짐(뒤에 같은 단계 형제 있음). 마지막 단계는 ╰ 꺾임 */
   constructor(lvl, cont) { super(); this.lvl = lvl; this.cont = cont; }
@@ -129,7 +129,7 @@ function frontmatterEnd(doc) {
   return -1;
 }
 
-// ------------------------------------------------------------ inline (lezer 가 모르는 옵시디언 문법)
+// ------------------------------------------------------------ inline (lezer 가 모르는 확장 문법)
 const OBS_INLINE = [
   // %%주석%%: 커서가 닿을 때만 흐리게 보임
   { re: /%%.*?%%/g, run: (d, m, f, t, touched) => d.push((touched(f, t) ? mark("cm-comment") : hide).range(f, t)) },
@@ -345,7 +345,7 @@ function build(view) {
       },
     });
 
-    // 옵시디언 전용 인라인 문법: 줄 단위 정규식
+    // 확장 인라인 문법: 줄 단위 정규식
     for (let p = from; p <= to;) {
       const l = doc.lineAt(p);
       p = l.to + 1;
@@ -440,7 +440,7 @@ function toggleTaskAt(view, pos) {
   if (!m) return false;
   const at = l.from + m[1].length, checking = m[2] === " ";
   const changes = [{ from: at, to: at + 1, insert: checking ? "x" : " " }];
-  // 날짜(🛫/📅) 붙은 할일: 체크 = 줄 끝(블록 id 앞)에 `✅ 오늘`, 해제 = ✅ 날짜 뺌 (옵시디언 Tasks 형식, app.js toggleTaskLine 과 같은 규칙)
+  // 날짜(🛫/📅) 붙은 할일: 체크 = 줄 끝(블록 id 앞)에 `✅ 오늘`, 해제 = ✅ 날짜 뺌 (이모지 날짜 형식, app.js toggleTaskLine 과 같은 규칙)
   for (const d of l.text.matchAll(/\s*✅️?\s*\d{4}-\d{2}-\d{2}/gu)) changes.push({ from: l.from + d.index, to: l.from + d.index + d[0].length, insert: "" });
   if (checking && /(🛫|📅)️?\s*\d{4}-\d{2}-\d{2}/u.test(l.text)) {
     const body = l.text.trimEnd(), id = body.match(/\s\^[\w-]+$/), n = new Date();

@@ -28,7 +28,7 @@ from team import FAIL_LIMIT, FAIL_LOCK, INVITE_TTL, TeamError, bad_code
 POLL_INTERVAL = 1.0      # 파일 변경 감시 주기(초)
 HEARTBEAT_INTERVAL = 15  # SSE keep-alive 주기(초)
 
-# 파일명 규칙: "261030 금.md" (YYMMDD) 또는 "2026-10-30.md" (옵시디언 기본 데일리노트)
+# 파일명 규칙: "261030 금.md" (YYMMDD) 또는 "2026-10-30.md" (ISO 날짜 이름)
 FILE_PATTERNS = [
     (re.compile(r"^(\d{2})(\d{2})(\d{2})(?:[\s_].*)?\.md$", re.I), lambda m: (2000 + int(m[1]), int(m[2]), int(m[3]))),
     (re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[\s_].*)?\.md$", re.I), lambda m: (int(m[1]), int(m[2]), int(m[3]))),
@@ -81,7 +81,7 @@ def atomic_write(path, content):
 
 
 def count_tasks(text):
-    """체크박스 항목 수(하위 항목 포함). 공백이 아닌 상태 문자는 모두 완료로 본다(옵시디언 동작)."""
+    """체크박스 항목 수(하위 항목 포함). 공백이 아닌 상태 문자는 모두 완료로 본다(`[/]`·`[-]` 같은 확장 표기 포함)."""
     done = total = 0
     in_fence = False
     for line in text.splitlines():
@@ -98,8 +98,8 @@ def count_tasks(text):
     return done, total
 
 
-TASK_DATE_RE = re.compile("\\s*(\U0001F6EB|\U0001F4C5)\uFE0F?\\s*(\\d{4}-\\d{2}-\\d{2})")   # 🛫 시작 / 📅 마감 (옵시디언 Tasks)
-TASK_DONE_RE = re.compile("\\s*\u2705\uFE0F?\\s*(\\d{4}-\\d{2}-\\d{2})")   # ✅ 완료 날짜 (옵시디언 Tasks)
+TASK_DATE_RE = re.compile("\\s*(\U0001F6EB|\U0001F4C5)\uFE0F?\\s*(\\d{4}-\\d{2}-\\d{2})")   # 🛫 시작 / 📅 마감 (이모지 날짜 형식)
+TASK_DONE_RE = re.compile("\\s*\u2705\uFE0F?\\s*(\\d{4}-\\d{2}-\\d{2})")   # ✅ 완료 날짜 (이모지 날짜 형식)
 TASK_HEAD_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[.\]\s*")
 TASK_MARK_RE = re.compile(r"\*\*|==|~~|\[\[|\]\]")
 
@@ -296,7 +296,7 @@ class NoteStore:
 
     def write(self, d, content, base_mtime=None, new_only=False):
         """노트 저장. 파일이 없으면 선택폴더/yyyy.mm/YYMMDD 요일.md 로 새로 만든다.
-        base_mtime 이 현재 파일과 다르면(그 사이 옵시디언 등에서 수정됨) 저장하지 않고 None.
+        base_mtime 이 현재 파일과 다르면(그 사이 다른 팀원·다른 프로그램이 고침) 저장하지 않고 None.
         new_only = 없는 파일로 알고 씀(base_mtime: null) → 그 사이 누가 만들었으면 None"""
         with self.write_lock:   # 확인~쓰기 사이에 다른 저장이 끼면 둘 다 통과해 앞의 것이 사라짐
             with self.lock:
@@ -312,7 +312,7 @@ class NoteStore:
                 folder = os.path.join(root, f"{d.year:04d}.{d.month:02d}")
                 os.makedirs(folder, exist_ok=True)
                 path = os.path.join(folder, f"{d:%y%m%d} {WEEKDAYS[d.weekday()]}.md")
-                if new_only and os.path.exists(path):   # 목록엔 아직 없지만(옵시디언이 방금 만듦 등) 파일이 있음
+                if new_only and os.path.exists(path):   # 목록엔 아직 없지만(다른 프로그램이 방금 만듦 등) 파일이 있음
                     self.refresh()   # 다시 받을 때 그 파일이 보이게
                     return None
             atomic_write(path, content)
